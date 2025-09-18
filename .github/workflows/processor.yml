@@ -1,0 +1,40 @@
+name: Video Processor Worker
+
+# This tells GitHub to run the workflow when it receives an API call
+# with the event type "video-job"
+on:
+  repository_dispatch:
+    types: [video-job]
+
+jobs:
+  build-video:
+    runs-on: ubuntu-latest # Use a standard, free Linux virtual machine
+
+    steps:
+      # Step 1: Check out a copy of your repository's code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Step 2: Set up the Python environment
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Step 3: Install all necessary software
+      - name: Install Dependencies
+        run: |
+          sudo apt-get -y update
+          sudo apt-get -y install ffmpeg
+          pip install boto3 requests
+
+      # Step 4: Run your worker.py script
+      - name: Run Video Processor
+        env:
+          # Securely pass your AWS secrets to the script
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_S3_BUCKET_NAME: ${{ secrets.AWS_S3_BUCKET_NAME }}
+          # Pass the Job ID from the API call to the script
+          JOB_ID: ${{ github.event.client_payload.job_id }}
+        run: python worker.py

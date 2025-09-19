@@ -15,14 +15,10 @@ AWS_S3_BUCKET_NAME = os.environ.get('AWS_S3_BUCKET_NAME')
 JOB_ID = os.environ.get('JOB_ID')
 FFMPEG_PATH = "ffmpeg"
 
+# This helper function is no longer needed by the main script but is kept for reference
 def wrap_text(text, width=40):
     """Wraps text to a specified width for video captions."""
     return '\n'.join(textwrap.wrap(text, width=width))
-
-def format_time(seconds):
-    """Converts seconds to SRT time format HH:MM:SS,ms"""
-    millisec = int((seconds - int(seconds)) * 1000)
-    return time.strftime('%H:%M:%S', time.gmtime(seconds)) + f',{millisec:03d}'
 
 # --- Part 2: The Core Video Processing Function ---
 def process_job(job_data):
@@ -64,35 +60,25 @@ def process_job(job_data):
             duration = scene.get('duration', 1.0)
             intermediate_path = os.path.join(output_dir, f"scene_{i}.mp4")
             
-            dialogue_text = scene.get('line', '')
-            wrapped_text = wrap_text(dialogue_text)
-            srt_file_path = os.path.join(input_dir, f"caption_{i}.srt")
-            srt_content = f"1\n{format_time(0)} --> {format_time(duration)}\n{wrapped_text}\n\n"
-            with open(srt_file_path, 'w', encoding='utf-8') as f:
-                f.write(srt_content)
-            escaped_srt_path = srt_file_path.replace("\\", "/").replace(":", "\\:")
-
             fade_duration = 0.5
             total_frames = int(duration * framerate)
-            font_size = caption_settings.get('size', 35)
-            hex_color = caption_settings.get('color', '#FFFFFF').lstrip('#')
-            ffmpeg_color = f"&HFF{hex_color[4:6]}{hex_color[2:4]}{hex_color[0:2]}"
 
-            # --- THIS IS THE CORRECTED FILTER CHAIN ---
-            # Corrected the comma to a colon in the zoompan filter and restored total_frames duration
+            # --- UPDATED: Simplified filter chain with no text rendering ---
             filter_complex = (
                 f"[0:v]trim=duration={duration},setpts=PTS-STARTPTS,scale=3840:2160[vbase];"
                 f"[vbase]zoompan=z='zoom+0.0005':d={total_frames}:s=1280x720[vzoomed];"
-                f"[vzoomed]fade=in:st=0:d={fade_duration},fade=out:st={duration - fade_duration}:d={fade_duration}[vfaded];"
-                f"[vfaded]subtitles='{escaped_srt_path}':force_style='FontName=Liberation Sans,FontSize={font_size},PrimaryColour={ffmpeg_color},BorderStyle=3,BoxColour=&H99000000,Alignment=2'"
+                # The fade filter now outputs the final stream [v{i}] for this scene
+                f"[vzoomed]fade=in:st=0:d={fade_duration},fade=out:st={duration - fade_duration}:d={fade_duration}[v{i}]"
             )
-            # --- END OF CORRECTION ---
             
             ffmpeg_scene_cmd = [
                 FFMPEG_PATH, '-y',
                 '-loop', '1', '-r', str(framerate), '-i', scene['local_image_path'],
                 '-i', scene['local_audio_path'],
                 '-filter_complex', filter_complex,
+                # Map the final video stream and the original audio stream
+                '-map', f'[v{i}]',
+                '-map', '1:a',
                 '-c:v', 'libx264', '-preset', 'fast', '-pix_fmt', 'yuv420p',
                 '-c:a', 'aac', '-t', str(duration),
                 intermediate_path

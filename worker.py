@@ -6,6 +6,7 @@ import time
 import boto3
 from urllib.parse import urlparse
 import shutil
+import textwrap
 
 # --- Part 1: Configuration ---
 AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
@@ -13,6 +14,11 @@ AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
 AWS_S3_BUCKET_NAME = os.environ.get('AWS_S3_BUCKET_NAME')
 JOB_ID = os.environ.get('JOB_ID')
 FFMPEG_PATH = "ffmpeg"
+
+# --- NEW: Helper function to wrap long lines of text ---
+def wrap_text(text, width=40):
+    """Wraps text to a specified width for video captions."""
+    return '\n'.join(textwrap.wrap(text, width=width))
 
 # --- Part 2: The Core Video Processing Function ---
 def process_job(job_data):
@@ -55,7 +61,10 @@ def process_job(job_data):
             intermediate_path = os.path.join(output_dir, f"scene_{i}.mp4")
             
             dialogue_text = scene.get('line', '')
-            safe_caption = dialogue_text.replace("'", r"’").replace(':', r'\:').replace('%', r'%%').replace(',', r'\,')
+            # UPDATED: Wrap the text before creating the caption
+            wrapped_text = wrap_text(dialogue_text)
+            safe_caption = wrapped_text.replace("'", r"’").replace(':', r'\:').replace('%', r'%%').replace(',', r'\,')
+            
             fade_duration = 0.5
             total_frames = int(duration * framerate)
             y_pos_map = {"bottom": "(h-text_h)-20", "middle": "(h-text_h)/2", "top": "20"}
@@ -77,10 +86,7 @@ def process_job(job_data):
                 '-loop', '1', '-i', scene['local_image_path'],
                 '-i', scene['local_audio_path'],
                 '-filter_complex', filter_complex,
-                '-c:v', 'libx264', '-preset', 'veryfast',
-                # --- THIS IS THE CORRECTED LINE ---
-                '-pix_fmt', 'yuv420p',
-                # --- END OF CORRECTION ---
+                '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
                 '-c:a', 'aac', '-t', str(duration),
                 intermediate_path
             ]
@@ -100,11 +106,13 @@ def process_job(job_data):
         final_video_path = os.path.join(output_dir, "final_video.mp4")
         if local_bg_music_path:
             print("Mixing in background music...")
+            # UPDATED: Use dynamic volume from caption_settings
+            music_volume = int(caption_settings.get('musicVolume', 13)) / 100.0
             ffmpeg_mix_cmd = [
                 FFMPEG_PATH, '-y',
                 '-i', video_no_music_path,
                 '-i', local_bg_music_path,
-                '-filter_complex', "[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=3,volume=2[a]",
+                '-filter_complex', f"[1:a]volume={music_volume}[bga];[0:a][bga]amix=inputs=2:duration=first",
                 '-map', '0:v', '-map', '[a]',
                 '-c:v', 'copy', '-c:a', 'aac', '-shortest',
                 final_video_path
@@ -118,6 +126,14 @@ def process_job(job_data):
         s3.upload_file(final_video_path, AWS_S3_BUCKET_NAME, final_video_key)
         print(f"✅ Job {job_id} complete! Final video uploaded.")
 
+        print("Cleaning up temporary S3 files...")
+        s3_input_prefix = f"jobs/{job_id}/input/"
+        response = s3.list_objects_v2(Bucket=AWS_S3_BUCKET_NAME, Prefix=s3_input_prefix)
+        if 'Contents' in response:
+            objects_to_delete = [{'Key': obj['Key']} for obj in response['Contents']]
+            s3.delete_objects(Bucket=AWS_S3_BUCKET_NAME, Delete={'Objects': objects_to_delete})
+            print(f"Deleted {len(objects_to_delete)} temporary files from S3.")
+        
     except Exception as e:
         print(f"❌ ERROR processing job {job_id}: {e}")
         if isinstance(e, subprocess.CalledProcessError):

@@ -15,9 +15,7 @@ AWS_S3_BUCKET_NAME = os.environ.get('AWS_S3_BUCKET_NAME')
 JOB_ID = os.environ.get('JOB_ID')
 FFMPEG_PATH = "ffmpeg"
 
-# --- NEW: Helper function to wrap long lines of text ---
 def wrap_text(text, width=40):
-    """Wraps text to a specified width for video captions."""
     return '\n'.join(textwrap.wrap(text, width=width))
 
 # --- Part 2: The Core Video Processing Function ---
@@ -73,19 +71,21 @@ def process_job(job_data):
             font_color = caption_settings.get('color', '#FFFFFF')
             font_file = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
 
-            # --- THIS IS THE CORRECTED FILTER CHAIN ---
-            # The zoompan 'z' parameter is changed for a smoother effect
+            # --- UPDATED: New two-step filter for full-width caption box ---
             filter_complex = (
                 f"[0:v]trim=duration={duration},setpts=PTS-STARTPTS,scale=1280:720[vbase];"
                 f"[vbase]zoompan=z='if(gte(on,0),1+(on/({total_frames}-1))*0.2,1)':d={total_frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720[vzoomed];"
                 f"[vzoomed]fade=in:st=0:d={fade_duration},fade=out:st={duration - fade_duration}:d={fade_duration}[vfaded];"
-                f"[vfaded]drawtext=fontfile='{font_file}':text='{safe_caption}':fontsize={font_size}:fontcolor={font_color}:x=(w-tw)/2:y={y_pos}:box=1:boxcolor=black@0.5:boxborderw=5"
+                # Step 1: Draw a full-width, semi-transparent box at the bottom
+                f"[vfaded]drawbox=y=ih-ih*0.25:color=black@0.6:width=iw:height=ih*0.25:t=fill[vboxed];"
+                # Step 2: Draw the text on top of the box
+                f"[vboxed]drawtext=fontfile='{font_file}':text='{safe_caption}':fontsize={font_size}:fontcolor={font_color}:x=(w-tw)/2:y={y_pos}"
             )
             # --- END OF CORRECTION ---
 
             ffmpeg_scene_cmd = [
                 FFMPEG_PATH, '-y',
-                '-loop', '1', '-i', scene['local_image_path'],
+                '-loop', '1', '-r', str(framerate), '-i', scene['local_image_path'],
                 '-i', scene['local_audio_path'],
                 '-filter_complex', filter_complex,
                 '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
@@ -109,13 +109,8 @@ def process_job(job_data):
         if local_bg_music_path:
             print("Mixing in background music...")
             music_volume = int(caption_settings.get('musicVolume', 13)) / 100.0
-            
-            # --- THIS IS THE CORRECTED FILTER ---
-            # It correctly lowers the background music volume first, then mixes it,
-            # and properly labels the final output stream as '[a]'.
             mix_filter = f"[1:a]volume={music_volume}[bga];[0:a][bga]amix=inputs=2:duration=first[a]"
-            # --- END OF CORRECTION ---
-
+            
             ffmpeg_mix_cmd = [
                 FFMPEG_PATH, '-y',
                 '-i', video_no_music_path,

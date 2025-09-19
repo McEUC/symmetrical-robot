@@ -8,15 +8,11 @@ from urllib.parse import urlparse
 import shutil
 
 # --- Part 1: Configuration ---
-# This script reads all necessary secrets from environment variables
-# which will be securely provided by the GitHub Action.
-
 AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
 AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
 AWS_S3_BUCKET_NAME = os.environ.get('AWS_S3_BUCKET_NAME')
 JOB_ID = os.environ.get('JOB_ID')
-
-FFMPEG_PATH = "ffmpeg" # Use the system-installed ffmpeg
+FFMPEG_PATH = "ffmpeg"
 
 # --- Part 2: The Core Video Processing Function ---
 def process_job(job_data):
@@ -55,7 +51,7 @@ def process_job(job_data):
 
         for i, scene in enumerate(scenes):
             duration = scene.get('duration', 1.0)
-            inputs.extend(['-loop', '1', '-t', str(duration), '-i', scene['local_image_path']])
+            inputs.extend(['-loop', '1', '-i', scene['local_image_path']])
             inputs.extend(['-i', scene['local_audio_path']])
             video_concat_streams.append(f"[v{i}]")
             audio_concat_streams.append(f"[a{i}]")
@@ -71,12 +67,16 @@ def process_job(job_data):
             font_color = caption_settings.get('color', '#FFFFFF')
             font_file = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
 
+            # --- THIS IS THE CORRECTED FILTER CHAIN ---
+            # Added a 'trim' filter to explicitly set the duration of the video segment.
             filter_chains.extend([
-                f"[{i*2}:v]scale=1280:720,zoompan=z='min(zoom+0.001,1.2)':d={total_frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720[v{i}_zoomed]",
+                f"[{i*2}:v]trim=duration={duration},setpts=PTS-STARTPTS[v{i}_trimmed]",
+                f"[v{i}_trimmed]scale=1280:720,zoompan=z='min(zoom+0.001,1.2)':d={total_frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720[v{i}_zoomed]",
                 f"[v{i}_zoomed]fade=in:st=0:d={fade_duration},fade=out:st={duration - fade_duration}:d={fade_duration}[v{i}_faded]",
                 f"[v{i}_faded]drawtext=fontfile='{font_file}':text='{safe_caption}':fontsize={font_size}:fontcolor={font_color}:x=(w-tw)/2:y={y_pos}:box=1:boxcolor=black@0.5:boxborderw=5[v{i}]",
                 f"[{i*2+1}:a]asetpts=PTS-STARTPTS[a{i}]"
             ])
+            # --- END OF CORRECTION ---
 
         filter_chains.append(f"{''.join(video_concat_streams)}concat=n={len(scenes)}:v=1[outv]")
         filter_chains.append(f"{''.join(audio_concat_streams)}concat=n={len(scenes)}:v=0:a=1[maina]")
@@ -101,7 +101,7 @@ def process_job(job_data):
         print("FFmpeg finished.")
 
         final_video_key = f"jobs/{job_id}/output/final_video.mp4"
-        s3.upload_file(final_video_path, AWS_S3_BUCKET_NAME, final_video_key)
+        s3.upload_file(final_video_key, AWS_S3_BUCKET_NAME, final_video_key)
         print(f"✅ Job {job_id} complete! Final video uploaded.")
 
         print("Cleaning up temporary S3 files...")
@@ -118,7 +118,7 @@ def process_job(job_data):
             print("--- FFMPEG STDERR ---")
             print(e.stderr)
             print("--- END FFMPEG STDERR ---")
-        sys.exit(1) # Exit with an error code if something fails
+        sys.exit(1)
     finally:
         if os.path.exists(input_dir): shutil.rmtree(input_dir)
         if os.path.exists(output_dir): shutil.rmtree(output_dir)
@@ -130,7 +130,6 @@ if __name__ == "__main__":
         print("❌ ERROR: JOB_ID environment variable not set.")
         sys.exit(1)
     
-    # Download the job.json file from S3 to get the details
     s3_main = boto3.client('s3', aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
     job_key = f"jobs/{JOB_ID}/job.json"
     local_job_path = f"/tmp/{JOB_ID}.json"
@@ -141,9 +140,7 @@ if __name__ == "__main__":
         with open(local_job_path) as f:
             job_details = json.load(f)
         
-        # Run the main processing function
         process_job(job_details)
-
     except Exception as e:
         print(f"❌ ERROR: Failed to fetch or run job. Error: {e}")
         sys.exit(1)

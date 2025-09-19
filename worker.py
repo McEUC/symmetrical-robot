@@ -67,8 +67,6 @@ def process_job(job_data):
             font_color = caption_settings.get('color', '#FFFFFF')
             font_file = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
 
-            # --- THIS IS THE CORRECTED FILTER CHAIN ---
-            # Added a 'trim' filter to explicitly set the duration of the video segment.
             filter_chains.extend([
                 f"[{i*2}:v]trim=duration={duration},setpts=PTS-STARTPTS[v{i}_trimmed]",
                 f"[v{i}_trimmed]scale=1280:720,zoompan=z='min(zoom+0.001,1.2)':d={total_frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720[v{i}_zoomed]",
@@ -76,7 +74,6 @@ def process_job(job_data):
                 f"[v{i}_faded]drawtext=fontfile='{font_file}':text='{safe_caption}':fontsize={font_size}:fontcolor={font_color}:x=(w-tw)/2:y={y_pos}:box=1:boxcolor=black@0.5:boxborderw=5[v{i}]",
                 f"[{i*2+1}:a]asetpts=PTS-STARTPTS[a{i}]"
             ])
-            # --- END OF CORRECTION ---
 
         filter_chains.append(f"{''.join(video_concat_streams)}concat=n={len(scenes)}:v=1[outv]")
         filter_chains.append(f"{''.join(audio_concat_streams)}concat=n={len(scenes)}:v=0:a=1[maina]")
@@ -100,8 +97,12 @@ def process_job(job_data):
         subprocess.run(ffmpeg_cmd, check=True, capture_output=True, text=True)
         print("FFmpeg finished.")
 
+        # --- THIS IS THE CORRECTED LINE ---
+        # The first argument must be the LOCAL file path, not the S3 key.
         final_video_key = f"jobs/{job_id}/output/final_video.mp4"
-        s3.upload_file(final_video_key, AWS_S3_BUCKET_NAME, final_video_key)
+        s3.upload_file(final_video_path, AWS_S3_BUCKET_NAME, final_video_key)
+        # --- END OF CORRECTION ---
+        
         print(f"✅ Job {job_id} complete! Final video uploaded.")
 
         print("Cleaning up temporary S3 files...")

@@ -44,7 +44,7 @@ def process_job(job_data):
             s3.download_file(AWS_S3_BUCKET_NAME, bg_music_key, local_bg_music_path)
         print("Assets downloaded.")
 
-        print("Building and executing FFmpeg command (CPU mode)...")
+        print("Building individual scene videos...")
         intermediate_video_paths = []
         caption_settings = job_data.get('caption_settings', {})
         framerate = 24
@@ -77,14 +77,17 @@ def process_job(job_data):
                 '-loop', '1', '-i', scene['local_image_path'],
                 '-i', scene['local_audio_path'],
                 '-filter_complex', filter_complex,
-                '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'y_h-text_h)',
+                '-c:v', 'libx264', '-preset', 'veryfast',
+                # --- THIS IS THE CORRECTED LINE ---
+                '-pix_fmt', 'yuv420p',
+                # --- END OF CORRECTION ---
                 '-c:a', 'aac', '-t', str(duration),
                 intermediate_path
             ]
             subprocess.run(ffmpeg_scene_cmd, check=True, capture_output=True, text=True)
             intermediate_video_paths.append(intermediate_path)
 
-        print("\n--- Stitching scene videos together ---")
+        print("\nStitching scene videos together...")
         concat_list_path = os.path.join(output_dir, "concat_list.txt")
         with open(concat_list_path, 'w') as f:
             for path in intermediate_video_paths:
@@ -101,7 +104,7 @@ def process_job(job_data):
                 FFMPEG_PATH, '-y',
                 '-i', video_no_music_path,
                 '-i', local_bg_music_path,
-                '-filter_complex', "[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=3,volume=2[a]", # Added volume boost for main audio
+                '-filter_complex', "[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=3,volume=2[a]",
                 '-map', '0:v', '-map', '[a]',
                 '-c:v', 'copy', '-c:a', 'aac', '-shortest',
                 final_video_path
@@ -114,7 +117,7 @@ def process_job(job_data):
         final_video_key = f"jobs/{job_id}/output/final_video.mp4"
         s3.upload_file(final_video_path, AWS_S3_BUCKET_NAME, final_video_key)
         print(f"✅ Job {job_id} complete! Final video uploaded.")
-        
+
     except Exception as e:
         print(f"❌ ERROR processing job {job_id}: {e}")
         if isinstance(e, subprocess.CalledProcessError):
@@ -128,7 +131,6 @@ def process_job(job_data):
         print(f"Cleaned up local files for job {job_id}.")
 
 # --- Part 4: Main Execution Block ---
-# This block MUST NOT be indented.
 if __name__ == "__main__":
     if not JOB_ID:
         print("❌ ERROR: JOB_ID environment variable not set.")

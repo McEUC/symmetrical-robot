@@ -61,7 +61,6 @@ def process_job(job_data):
             intermediate_path = os.path.join(output_dir, f"scene_{i}.mp4")
             
             dialogue_text = scene.get('line', '')
-            # UPDATED: Wrap the text before creating the caption
             wrapped_text = wrap_text(dialogue_text)
             safe_caption = wrapped_text.replace("'", r"’").replace(':', r'\:').replace('%', r'%%').replace(',', r'\,')
             
@@ -106,13 +105,19 @@ def process_job(job_data):
         final_video_path = os.path.join(output_dir, "final_video.mp4")
         if local_bg_music_path:
             print("Mixing in background music...")
-            # UPDATED: Use dynamic volume from caption_settings
             music_volume = int(caption_settings.get('musicVolume', 13)) / 100.0
+            
+            # --- THIS IS THE CORRECTED FILTER ---
+            # It correctly lowers the background music volume first, then mixes it,
+            # and properly labels the final output stream as '[a]'.
+            mix_filter = f"[1:a]volume={music_volume}[bga];[0:a][bga]amix=inputs=2:duration=first[a]"
+            # --- END OF CORRECTION ---
+
             ffmpeg_mix_cmd = [
                 FFMPEG_PATH, '-y',
                 '-i', video_no_music_path,
                 '-i', local_bg_music_path,
-                '-filter_complex', f"[1:a]volume={music_volume}[bga];[0:a][bga]amix=inputs=2:duration=first",
+                '-filter_complex', mix_filter,
                 '-map', '0:v', '-map', '[a]',
                 '-c:v', 'copy', '-c:a', 'aac', '-shortest',
                 final_video_path
@@ -126,14 +131,6 @@ def process_job(job_data):
         s3.upload_file(final_video_path, AWS_S3_BUCKET_NAME, final_video_key)
         print(f"✅ Job {job_id} complete! Final video uploaded.")
 
-        print("Cleaning up temporary S3 files...")
-        s3_input_prefix = f"jobs/{job_id}/input/"
-        response = s3.list_objects_v2(Bucket=AWS_S3_BUCKET_NAME, Prefix=s3_input_prefix)
-        if 'Contents' in response:
-            objects_to_delete = [{'Key': obj['Key']} for obj in response['Contents']]
-            s3.delete_objects(Bucket=AWS_S3_BUCKET_NAME, Delete={'Objects': objects_to_delete})
-            print(f"Deleted {len(objects_to_delete)} temporary files from S3.")
-        
     except Exception as e:
         print(f"❌ ERROR processing job {job_id}: {e}")
         if isinstance(e, subprocess.CalledProcessError):

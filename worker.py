@@ -64,29 +64,29 @@ def process_job(job_data):
             duration = scene.get('duration', 1.0)
             intermediate_path = os.path.join(output_dir, f"scene_{i}.mp4")
             
-            # Create a standard .srt subtitle file for reliable text wrapping
             dialogue_text = scene.get('line', '')
             wrapped_text = wrap_text(dialogue_text)
             srt_file_path = os.path.join(input_dir, f"caption_{i}.srt")
             srt_content = f"1\n{format_time(0)} --> {format_time(duration)}\n{wrapped_text}\n\n"
             with open(srt_file_path, 'w', encoding='utf-8') as f:
                 f.write(srt_content)
-            # FFmpeg requires special escaping for Windows-style paths, this is safer
             escaped_srt_path = srt_file_path.replace("\\", "/").replace(":", "\\:")
 
             fade_duration = 0.5
+            total_frames = int(duration * framerate)
             font_size = caption_settings.get('size', 35)
-            # Convert HEX color to FFmpeg's format (&HBBGGRR) for subtitles
             hex_color = caption_settings.get('color', '#FFFFFF').lstrip('#')
             ffmpeg_color = f"&HFF{hex_color[4:6]}{hex_color[2:4]}{hex_color[0:2]}"
 
-            # New filter chain for smoother zoom and robust subtitles
+            # --- THIS IS THE CORRECTED FILTER CHAIN ---
+            # Corrected the comma to a colon in the zoompan filter and restored total_frames duration
             filter_complex = (
                 f"[0:v]trim=duration={duration},setpts=PTS-STARTPTS,scale=3840:2160[vbase];"
-                f"[vbase]zoompan=z='zoom+0.0005':d=1,s=1280x720[vzoomed];"
+                f"[vbase]zoompan=z='zoom+0.0005':d={total_frames}:s=1280x720[vzoomed];"
                 f"[vzoomed]fade=in:st=0:d={fade_duration},fade=out:st={duration - fade_duration}:d={fade_duration}[vfaded];"
                 f"[vfaded]subtitles='{escaped_srt_path}':force_style='FontName=Liberation Sans,FontSize={font_size},PrimaryColour={ffmpeg_color},BorderStyle=3,BoxColour=&H99000000,Alignment=2'"
             )
+            # --- END OF CORRECTION ---
             
             ffmpeg_scene_cmd = [
                 FFMPEG_PATH, '-y',

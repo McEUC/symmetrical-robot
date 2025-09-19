@@ -19,6 +19,11 @@ def wrap_text(text, width=40):
     """Wraps text to a specified width for video captions."""
     return '\n'.join(textwrap.wrap(text, width=width))
 
+def format_time(seconds):
+    """Converts seconds to SRT time format HH:MM:SS,ms"""
+    millisec = int((seconds - int(seconds)) * 1000)
+    return time.strftime('%H:%M:%S', time.gmtime(seconds)) + f',{millisec:03d}'
+
 # --- Part 2: The Core Video Processing Function ---
 def process_job(job_data):
     job_id = job_data.get('job_id', 'unknown-job')
@@ -59,39 +64,36 @@ def process_job(job_data):
             duration = scene.get('duration', 1.0)
             intermediate_path = os.path.join(output_dir, f"scene_{i}.mp4")
             
-            # --- UPDATED: Text wrapping and file creation ---
+            # Create a standard .srt subtitle file for reliable text wrapping
             dialogue_text = scene.get('line', '')
             wrapped_text = wrap_text(dialogue_text)
-            caption_file_path = os.path.join(input_dir, f"caption_{i}.txt")
-            with open(caption_file_path, 'w', encoding='utf-8') as f:
-                f.write(wrapped_text)
-            # FFmpeg needs the path to be escaped
-            escaped_caption_path = caption_file_path.replace("'", "'\\''")
-            
+            srt_file_path = os.path.join(input_dir, f"caption_{i}.srt")
+            srt_content = f"1\n{format_time(0)} --> {format_time(duration)}\n{wrapped_text}\n\n"
+            with open(srt_file_path, 'w', encoding='utf-8') as f:
+                f.write(srt_content)
+            # FFmpeg requires special escaping for Windows-style paths, this is safer
+            escaped_srt_path = srt_file_path.replace("\\", "/").replace(":", "\\:")
+
             fade_duration = 0.5
-            total_frames = int(duration * framerate)
-            y_pos_map = {"bottom": "(h-text_h)-20", "middle": "(h-text_h)/2", "top": "20"}
-            
-            y_pos = y_pos_map.get(caption_settings.get('position', 'bottom'), "(h-text_h)-20")
             font_size = caption_settings.get('size', 35)
-            font_color = caption_settings.get('color', '#FFFFFF')
-            font_file = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+            # Convert HEX color to FFmpeg's format (&HBBGGRR) for subtitles
+            hex_color = caption_settings.get('color', '#FFFFFF').lstrip('#')
+            ffmpeg_color = f"&HFF{hex_color[4:6]}{hex_color[2:4]}{hex_color[0:2]}"
 
-            # --- UPDATED: New filter chain for smoother zoom and reliable text wrapping ---
+            # New filter chain for smoother zoom and robust subtitles
             filter_complex = (
-                f"[0:v]trim=duration={duration},setpts=PTS-STARTPTS,scale=3840:2160[vbase];" # Upscale for smooth zoom
-                f"[vbase]zoompan=z='if(gte(on,0),1+(on/({total_frames}-1))*0.2,1)':d={total_frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720[vzoomed];"
+                f"[0:v]trim=duration={duration},setpts=PTS-STARTPTS,scale=3840:2160[vbase];"
+                f"[vbase]zoompan=z='zoom+0.0005':d=1,s=1280x720[vzoomed];"
                 f"[vzoomed]fade=in:st=0:d={fade_duration},fade=out:st={duration - fade_duration}:d={fade_duration}[vfaded];"
-                f"[vfaded]drawbox=y=ih-ih*0.25:color=black@0.6:width=iw:height=ih*0.25:t=fill[vboxed];"
-                f"[vboxed]drawtext=fontfile='{font_file}':textfile='{escaped_caption_path}':fontsize={font_size}:fontcolor={font_color}:x=(w-tw)/2:y={y_pos}" # Use textfile
+                f"[vfaded]subtitles='{escaped_srt_path}':force_style='FontName=Liberation Sans,FontSize={font_size},PrimaryColour={ffmpeg_color},BorderStyle=3,BoxColour=&H99000000,Alignment=2'"
             )
-
+            
             ffmpeg_scene_cmd = [
                 FFMPEG_PATH, '-y',
                 '-loop', '1', '-r', str(framerate), '-i', scene['local_image_path'],
                 '-i', scene['local_audio_path'],
                 '-filter_complex', filter_complex,
-                '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+                '-c:v', 'libx264', '-preset', 'fast', '-pix_fmt', 'yuv420p',
                 '-c:a', 'aac', '-t', str(duration),
                 intermediate_path
             ]

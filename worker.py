@@ -73,12 +73,15 @@ def process_job(job_data):
             font_color = caption_settings.get('color', '#FFFFFF')
             font_file = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
 
+            # --- THIS IS THE CORRECTED FILTER CHAIN ---
+            # The zoompan 'z' parameter is changed for a smoother effect
             filter_complex = (
                 f"[0:v]trim=duration={duration},setpts=PTS-STARTPTS,scale=1280:720[vbase];"
-                f"[vbase]zoompan=z='min(zoom+0.001,1.2)':d={total_frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720[vzoomed];"
+                f"[vbase]zoompan=z='if(gte(on,0),1+(on/({total_frames}-1))*0.2,1)':d={total_frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720[vzoomed];"
                 f"[vzoomed]fade=in:st=0:d={fade_duration},fade=out:st={duration - fade_duration}:d={fade_duration}[vfaded];"
                 f"[vfaded]drawtext=fontfile='{font_file}':text='{safe_caption}':fontsize={font_size}:fontcolor={font_color}:x=(w-tw)/2:y={y_pos}:box=1:boxcolor=black@0.5:boxborderw=5"
             )
+            # --- END OF CORRECTION ---
 
             ffmpeg_scene_cmd = [
                 FFMPEG_PATH, '-y',

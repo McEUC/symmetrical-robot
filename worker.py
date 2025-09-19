@@ -16,6 +16,7 @@ JOB_ID = os.environ.get('JOB_ID')
 FFMPEG_PATH = "ffmpeg"
 
 def wrap_text(text, width=40):
+    """Wraps text to a specified width for video captions."""
     return '\n'.join(textwrap.wrap(text, width=width))
 
 # --- Part 2: The Core Video Processing Function ---
@@ -58,9 +59,14 @@ def process_job(job_data):
             duration = scene.get('duration', 1.0)
             intermediate_path = os.path.join(output_dir, f"scene_{i}.mp4")
             
+            # --- UPDATED: Text wrapping and file creation ---
             dialogue_text = scene.get('line', '')
             wrapped_text = wrap_text(dialogue_text)
-            safe_caption = wrapped_text.replace("'", r"’").replace(':', r'\:').replace('%', r'%%').replace(',', r'\,')
+            caption_file_path = os.path.join(input_dir, f"caption_{i}.txt")
+            with open(caption_file_path, 'w', encoding='utf-8') as f:
+                f.write(wrapped_text)
+            # FFmpeg needs the path to be escaped
+            escaped_caption_path = caption_file_path.replace("'", "'\\''")
             
             fade_duration = 0.5
             total_frames = int(duration * framerate)
@@ -71,17 +77,14 @@ def process_job(job_data):
             font_color = caption_settings.get('color', '#FFFFFF')
             font_file = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
 
-            # --- UPDATED: New two-step filter for full-width caption box ---
+            # --- UPDATED: New filter chain for smoother zoom and reliable text wrapping ---
             filter_complex = (
-                f"[0:v]trim=duration={duration},setpts=PTS-STARTPTS,scale=1280:720[vbase];"
+                f"[0:v]trim=duration={duration},setpts=PTS-STARTPTS,scale=3840:2160[vbase];" # Upscale for smooth zoom
                 f"[vbase]zoompan=z='if(gte(on,0),1+(on/({total_frames}-1))*0.2,1)':d={total_frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720[vzoomed];"
                 f"[vzoomed]fade=in:st=0:d={fade_duration},fade=out:st={duration - fade_duration}:d={fade_duration}[vfaded];"
-                # Step 1: Draw a full-width, semi-transparent box at the bottom
                 f"[vfaded]drawbox=y=ih-ih*0.25:color=black@0.6:width=iw:height=ih*0.25:t=fill[vboxed];"
-                # Step 2: Draw the text on top of the box
-                f"[vboxed]drawtext=fontfile='{font_file}':text='{safe_caption}':fontsize={font_size}:fontcolor={font_color}:x=(w-tw)/2:y={y_pos}"
+                f"[vboxed]drawtext=fontfile='{font_file}':textfile='{escaped_caption_path}':fontsize={font_size}:fontcolor={font_color}:x=(w-tw)/2:y={y_pos}" # Use textfile
             )
-            # --- END OF CORRECTION ---
 
             ffmpeg_scene_cmd = [
                 FFMPEG_PATH, '-y',

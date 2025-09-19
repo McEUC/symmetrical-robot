@@ -37,4 +37,4 @@ jobs:
           AWS_S3_BUCKET_NAME: ${{ secrets.AWS_S3_BUCKET_NAME }}
           # Pass the Job ID from the API call to the script
           JOB_ID: ${{ github.event.client_payload.job_id }}
-        run: python worker.py
+        run: python -u  worker.py

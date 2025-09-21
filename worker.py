@@ -152,3 +152,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ ERROR: Failed to fetch or run job. Error: {e}")
         sys.exit(1)
+

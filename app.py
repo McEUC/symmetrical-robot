@@ -44,7 +44,7 @@ def generate_script_from_prompt(api_key, prompt):
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={api_key}"
+            endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={api_key}"
             headers = {"Content-Type": "application/json"}
             data = {"contents": [{"parts": [{"text": prompt}]}]}
             response = requests.post(endpoint, headers=headers, json=data)

@@ -222,6 +222,8 @@
             DOMElements.generateBtn.disabled = true;
             DOMElements.generateBtn.textContent = 'Submitting Job...';
             DOMElements.progressContainer.style.display = 'block';
+            DOMElements.progressBar.style.backgroundColor = '#0079d3';
+            DOMElements.statusLog.innerHTML = '';
             updateProgress(10, 'Submitting...');
             logStatus('📦 Submitting job to the server...');
 
@@ -315,3 +317,10 @@
     </script>
 </body>
 </html>
+
+
+
+
+
+
+        

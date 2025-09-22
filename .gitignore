@@ -1,2 +1,7 @@
-ecosystem.config.js
+# Python
+__pycache__/
+*.pyc
 venv/
+
+# Secrets
+ecosystem.config.js

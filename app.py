@@ -48,6 +48,7 @@ def handle_video_generation():
             "api_key": form_data.get('apiKey'),
             "channel_name": form_data.get('channelName'),
             "narrator_style": form_data.get('narratorStyle'),
+            "is_short_form": form_data.get('isShortForm') == 'true',
             "voice_settings": json.loads(form_data.get('voiceSettings')),
             "caption_settings": json.loads(form_data.get('captionSettings')),
         }
@@ -105,4 +106,3 @@ def get_status(job_id):
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
-

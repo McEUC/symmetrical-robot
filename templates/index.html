@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Liminal Echoes & Reddit Video Generator</title>
+    <title>AI Video Generator</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -32,14 +32,20 @@
         .api-key-group { display: flex; align-items: center; gap: 10px; }
         .api-key-group input[type="password"] { flex-grow: 1; }
         .api-key-group label { display: flex; align-items: center; gap: 5px; font-size: 0.9rem; color: #555; cursor: pointer; }
-        input, select, button, textarea { font-size: 1rem; border-radius: 6px; }
-        input[type="text"], input[type="password"], select, input[type="file"], textarea { width: 100%; padding: 10px; border: 1px solid #ddd; box-sizing: border-box; }
-        textarea { resize: vertical; min-height: 80px; }
+        input, select, button { font-size: 1rem; border-radius: 6px; }
+        input[type="text"], input[type="password"], select, input[type="file"] { width: 100%; padding: 10px; border: 1px solid #ddd; box-sizing: border-box; }
         .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; text-align: left; padding: 1rem; border: 1px solid #e1e1e1; border-radius: 8px; margin-top: 1rem; }
         .settings-grid h3 { grid-column: 1 / -1; text-align: center; margin-top: 0; color: #333; }
         .control-group { display: grid; grid-template-columns: 120px 1fr; gap: 10px; align-items: center; }
-        .control-group label { font-weight: 500; text-align: right; }
-        button { background-color: #ff4500; color: white; border: none; padding: 12px 20px; font-weight: bold; cursor: pointer; transition: background-color: 0.2s; margin-top: 10px; }
+        .control-group label, .voice-selector label { font-weight: 500; text-align: right; }
+        .voice-selector { display: grid; grid-template-columns: 120px 1fr; gap: 10px; align-items: center; }
+        .toggle-switch { display: flex; align-items: center; justify-content: flex-start; }
+        .toggle-switch input { height: 0; width: 0; visibility: hidden; }
+        .toggle-switch label { cursor: pointer; text-indent: -9999px; width: 50px; height: 28px; background: grey; display: block; border-radius: 100px; position: relative; }
+        .toggle-switch label:after { content: ''; position: absolute; top: 2px; left: 2px; width: 24px; height: 24px; background: #fff; border-radius: 24px; transition: 0.3s; }
+        .toggle-switch input:checked + label { background: #ff4500; }
+        .toggle-switch input:checked + label:after { left: calc(100% - 2px); transform: translateX(-100%); }
+        button { background-color: #ff4500; color: white; border: none; padding: 12px 20px; font-weight: bold; cursor: pointer; transition: background-color 0.2s; margin-top: 10px; }
         button:hover:not(:disabled) { background-color: #e03d00; }
         button:disabled { background-color: #cccccc; cursor: not-allowed; }
         #progress-container { width: 100%; background-color: #e0e0e0; border-radius: 4px; margin-top: 1rem; display: none; }
@@ -50,7 +56,7 @@
 <body>
 
     <div id="app-container">
-        <h1>Video Generator</h1>
+        <h1>AI Video Generator</h1>
         <div class="input-group">
             <input type="text" id="url-input" placeholder="Paste a Backrooms Wiki or Reddit URL here...">
             <div class="api-key-group">
@@ -63,42 +69,33 @@
             <h3>Channel & Narrator Settings</h3>
             <div class="control-group">
                 <label for="channel-name-input">Channel Name:</label>
-                <input type="text" id="channel-name-input" placeholder="(Optional) e.g., 'Net Mysteries'">
+                <input type="text" id="channel-name-input" placeholder="(Optional) e.g., 'Tales from the Upboat'">
             </div>
             <div class="control-group">
                 <label for="narrator-style-select">Narrator Style:</label>
                 <select id="narrator-style-select">
-                    <option value="">Default (Neutral)</option>
-                    <option value="Newscaster">Newscaster</option>
+                    <option value="">(Default) Neutral & Informative</option>
                     <option value="Funny and Energetic">Funny & Energetic</option>
-                    <option value="Documentary Host">Documentary Host</option>
-                    <option value="Spooky Storyteller">Spooky Storyteller</option>
-                    <option value="custom">Custom...</option>
+                    <option value="Serious and Newscaster-like">Newscaster</option>
+                    <option value="Mysterious and Storyteller">Mysterious Storyteller</option>
+                    <option value="Calm and Relaxing">Calm & Relaxing</option>
                 </select>
             </div>
-            <div class="control-group" id="custom-narrator-style-group" style="display: none;">
+             <div class="control-group">
                 <label for="custom-narrator-style-input">Custom Style:</label>
-                <textarea id="custom-narrator-style-input" placeholder="Describe the narrator's persona, e.g., 'A cynical detective from a 1940s noir film'"></textarea>
+                <input type="text" id="custom-narrator-style-input" placeholder="(Optional) Describe any style...">
             </div>
         </div>
 
         <div class="settings-grid">
-             <h3>Audio & Voice Settings</h3>
-            <div class="control-group">
+            <h3>Audio & Voice Settings</h3>
+            <div class="voice-selector">
                 <label for="narrator-voice-select">Narrator:</label>
                 <select id="narrator-voice-select"></select>
             </div>
-             <div class="control-group">
-                <label for="commenter1-voice-select">Commenter 1:</label>
+             <div class="voice-selector">
+                <label for="commenter1-voice-select">Commenter:</label>
                 <select id="commenter1-voice-select"></select>
-            </div>
-             <div class="control-group">
-                <label for="commenter2-voice-select">Commenter 2:</label>
-                <select id="commenter2-voice-select"></select>
-            </div>
-             <div class="control-group">
-                <label for="commenter3-voice-select">Commenter 3:</label>
-                <select id="commenter3-voice-select"></select>
             </div>
              <div class="control-group">
                 <label for="bg-music-input">Background Music:</label>
@@ -111,7 +108,14 @@
         </div>
         
         <div class="settings-grid">
-            <h3>Caption & Visual Settings</h3>
+            <h3>Visual Settings</h3>
+            <div class="control-group">
+                <label for="short-form-toggle">Short Form Video:</label>
+                <div class="toggle-switch">
+                    <input type="checkbox" id="short-form-toggle" />
+                    <label for="short-form-toggle">Toggle</label>
+                </div>
+            </div>
              <div class="control-group">
                 <label for="caption-font-select">Font:</label>
                 <select id="caption-font-select">
@@ -123,18 +127,6 @@
             <div class="control-group">
                 <label for="caption-size-input">Font Size:</label>
                 <input type="number" id="caption-size-input" value="35" min="20" max="100">
-            </div>
-            <div class="control-group">
-                <label for="caption-color-input">Font Color:</label>
-                <input type="color" id="caption-color-input" value="#FFFFFF">
-            </div>
-             <div class="control-group">
-                <label for="caption-position-select">Position:</label>
-                <select id="caption-position-select">
-                    <option value="bottom">Bottom</option>
-                    <option value="middle">Middle</option>
-                    <option value="top">Top</option>
-                </select>
             </div>
         </div>
 
@@ -157,19 +149,15 @@
             bgMusicVolume: document.getElementById('bg-music-volume'),
             channelNameInput: document.getElementById('channel-name-input'),
             narratorStyleSelect: document.getElementById('narrator-style-select'),
-            customNarratorStyleGroup: document.getElementById('custom-narrator-style-group'),
             customNarratorStyleInput: document.getElementById('custom-narrator-style-input'),
+            shortFormToggle: document.getElementById('short-form-toggle'),
             voiceSelectors: {
                 narrator: document.getElementById('narrator-voice-select'),
                 commenter1: document.getElementById('commenter1-voice-select'),
-                commenter2: document.getElementById('commenter2-voice-select'),
-                commenter3: document.getElementById('commenter3-voice-select'),
             },
             captionControls: {
                 font: document.getElementById('caption-font-select'),
                 size: document.getElementById('caption-size-input'),
-                color: document.getElementById('caption-color-input'),
-                position: document.getElementById('caption-position-select'),
             }
         };
 
@@ -185,8 +173,8 @@
             { name: 'en-US-Wavenet-D', gender: 'Male', type: 'WaveNet' },
             { name: 'en-US-Wavenet-F', gender: 'Female', type: 'WaveNet' },
             { name: 'en-GB-Wavenet-F', gender: 'Female', type: 'WaveNet' },
-            { name: 'en-US-Chirp-Standard-F', gender: 'Female', type: 'Chirp' },
-            { name: 'en-US-Chirp-Standard-G', gender: 'Male', type: 'Chirp' }
+            { name: 'en-US-Chirp3-HD-Achernar', gender: 'Female', type: 'Chirp' },
+            { name: 'en-US-Chirp3-HD-Enceladus', gender: 'Male', type: 'Chirp' }
         ];
 
         function populateVoiceSelectors() {
@@ -211,10 +199,11 @@
                 const selector = DOMElements.voiceSelectors[key];
                 selector.innerHTML = optionsHtml;
             }
+            // Set default voices
             DOMElements.voiceSelectors.narrator.value = 'en-US-Studio-Q';
             DOMElements.voiceSelectors.commenter1.value = 'en-US-Journey-D';
-            DOMElements.voiceSelectors.commenter2.value = 'en-US-Chirp-Standard-F';
-            DOMElements.voiceSelectors.commenter3.value = 'en-US-Chirp-Standard-G';
+            DOMElements.voiceSelectors.commenter2.value = 'en-US-Chirp3-HD-Achernar';
+            DOMElements.voiceSelectors.commenter3.value = 'en-US-Chirp3-HD-Enceladus';
         }
 
         const logStatus = (message) => {
@@ -238,14 +227,6 @@
             if (DOMElements.saveApiKeyCheckbox.checked) { localStorage.setItem('googleApiKey', DOMElements.apiKeyInput.value); } 
             else { localStorage.removeItem('googleApiKey'); }
         });
-
-        DOMElements.narratorStyleSelect.addEventListener('change', () => {
-            if (DOMElements.narratorStyleSelect.value === 'custom') {
-                DOMElements.customNarratorStyleGroup.style.display = 'grid';
-            } else {
-                DOMElements.customNarratorStyleGroup.style.display = 'none';
-            }
-        });
         
         DOMElements.generateBtn.addEventListener('click', async () => {
             const url = DOMElements.urlInput.value.trim();
@@ -267,14 +248,15 @@
             const formData = new FormData();
             formData.append('url', url);
             formData.append('apiKey', apiKey);
-
             formData.append('channelName', DOMElements.channelNameInput.value.trim());
-            let narratorStyle = DOMElements.narratorStyleSelect.value;
-            if (narratorStyle === 'custom') {
-                narratorStyle = DOMElements.customNarratorStyleInput.value.trim();
+            
+            let narratorStyle = DOMElements.customNarratorStyleInput.value.trim();
+            if (!narratorStyle) {
+                narratorStyle = DOMElements.narratorStyleSelect.value;
             }
             formData.append('narratorStyle', narratorStyle);
-
+            formData.append('isShortForm', DOMElements.shortFormToggle.checked);
+            
             const voiceSettings = {};
             for (const key in DOMElements.voiceSelectors) {
                 voiceSettings[key] = DOMElements.voiceSelectors[key].value;
@@ -284,8 +266,6 @@
             const captionSettings = {
                 font: DOMElements.captionControls.font.value,
                 size: DOMElements.captionControls.size.value,
-                color: DOMElements.captionControls.color.value,
-                position: DOMElements.captionControls.position.value,
                 musicVolume: DOMElements.bgMusicVolume.value
             };
             formData.append('captionSettings', JSON.stringify(captionSettings));
@@ -301,13 +281,11 @@
                 });
 
                 const result = await response.json();
-                if (!response.ok) {
-                    throw new Error(result.error || 'Failed to submit job.');
-                }
+                if (!response.ok) { throw new Error(result.error || 'Failed to submit job.'); }
                 
                 const { jobId } = result;
-                logStatus(`✅ Job submitted! ID: ${jobId}`);
-                updateProgress(20, 'Waiting for Worker...');
+                logStatus(`✅ Job submitted! ID: ${jobId}. Waiting for worker...`);
+                updateProgress(25, 'Waiting for Worker...');
                 
                 pollInterval = setInterval(async () => {
                     try {
@@ -342,13 +320,10 @@
                         } else if (statusResult.status === 'in_progress') {
                             logStatus(`⏳ ${message}`);
                             const currentWidth = parseFloat(DOMElements.progressBar.style.width);
-                            if (currentWidth < 95) {
-                                updateProgress(currentWidth + 2, message);
-                            }
-                        } else { // 'pending'
-                             logStatus(`⏳ ${message}`);
+                            if (currentWidth < 95) { updateProgress(currentWidth + 2, message); }
+                        } else {
+                            logStatus(`⏳ ${message}`);
                         }
-                        
                     } catch (pollError) {
                         clearInterval(pollInterval);
                         throw pollError;
@@ -373,3 +348,5 @@
 </body>
 </html>
 
+
+        

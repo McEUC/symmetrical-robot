@@ -57,7 +57,7 @@ def generate_script_from_prompt(api_key, prompt):
             endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={api_key}"
             headers = {"Content-Type": "application/json"}
             data = {"contents": [{"parts": [{"text": prompt}]}]}
-            response = requests.post(endpoint, headers=headers, json=data, timeout=60)
+            response = requests.post(endpoint, headers=headers, json=data, timeout=90)
             response.raise_for_status()
             
             response_json = response.json()
@@ -79,16 +79,17 @@ def generate_script_from_prompt(api_key, prompt):
                 
     raise Exception("Failed to get valid script from Gemini API after multiple attempts.")
 
-def generate_image(api_key, prompt, output_path):
+def generate_image(api_key, prompt, output_path, is_short_form=False):
     """Generates an image using Vertex AI, with a self-healing retry mechanism."""
-    print(f"Generating real image for prompt: '{prompt}'")
+    print(f"Generating image for prompt: '{prompt}'")
+    aspect_ratio = "9:16" if is_short_form else "16:9"
     max_retries = 3
     current_prompt = prompt
     for attempt in range(max_retries):
         try:
             vertexai.init(project=GCP_PROJECT_ID)
             model = ImageGenerationModel.from_pretrained("imagegeneration@006")
-            images = model.generate_images(prompt=current_prompt, number_of_images=1, aspect_ratio="16:9", negative_prompt="text, letters, words, watermark, signature, logo")
+            images = model.generate_images(prompt=current_prompt, number_of_images=1, aspect_ratio=aspect_ratio, negative_prompt="text, letters, words, watermark, signature, logo")
             if images:
                 images[0].save(location=output_path, include_generation_parameters=False)
                 print(f"Successfully saved image to {output_path}")
@@ -154,52 +155,42 @@ def generate_audio(api_key, text, voice_name, output_path):
     return float(result.stdout.strip())
 
 # --- DYNAMIC PROMPT GENERATION ---
-def generate_dynamic_prompt(url_type, content, channel_name, narrator_style):
+def generate_dynamic_prompt(url_type, content, channel_name, narrator_style, is_short_form):
     
-    style_instruction = ""
-    if narrator_style:
-        style_instruction = f"""
-- **Host Persona:** You are a narrator with a '{narrator_style}' style. Your tone should be consistent with this description throughout the script.
-"""
-    else:
-        style_instruction = "- **Host Persona:** You are a neutral, informative narrator."
-
-    # --- FIX: Using triple-quotes for robustness ---
-    branded_intro = ""
-    branded_outro = ""
-    if channel_name:
-        branded_intro = f"""Start with the line: "Welcome back to {channel_name}, where we dive headfirst into the best stories the internet has to offer." """
-        branded_outro = f"""End the video with the exact lines: "And that's all the time we have for today on {channel_name}. If you liked this story, be sure to hit that subscribe button. Until next time, stay curious." """
-    else:
-        branded_intro = "Start the video with a compelling, short hook (1-2 sentences) that teases the main story's theme or conflict."
-        branded_outro = "End the video with a concluding thought or a question for the viewer."
-
-    image_style = "'A vibrant and detailed digital illustration in a classic Japanese anime style.'"
-    if url_type == 'backrooms':
-        image_style = "'A grainy, unsettling, found-footage style photograph' OR 'A hyper-realistic, liminal space digital painting'."
-    elif url_type == 'generic':
-        image_style = "'A cinematic, hyper-realistic digital painting with dramatic lighting'."
+    style_instruction = f"- **Host Persona:** You are a narrator with a '{narrator_style}' style." if narrator_style else "- **Host Persona:** You are a neutral, informative narrator."
+    
+    branded_intro = f'Start with the line: "Welcome back to {channel_name}!"' if channel_name else "Start with a compelling hook (1-2 sentences)."
+    branded_outro = f'End with: "Thanks for watching {channel_name}! Subscribe for more!"' if channel_name else "End with a concluding thought."
+    
+    scene_count = "8 to 12 scenes" if is_short_form else "15 to 20 scenes"
+    
+    image_style_map = {
+        'reddit': "'A vibrant and detailed digital illustration in a classic Japanese anime style.'",
+        'backrooms': "'A grainy, unsettling, found-footage style photograph' OR 'A hyper-realistic, liminal space digital painting.'",
+        'generic': "'A cinematic, hyper-realistic digital painting with dramatic lighting.'"
+    }
+    image_style = image_style_map.get(url_type, image_style_map['generic'])
 
     prompt = f"""
 ACT as a YouTube host. Your task is to create an engaging video script based on the provided web content.
+The script should be structured for a video with {scene_count}.
 
 **Channel & Host Style:**
 {style_instruction}
-- **Content Style:** The video should feel like a conversation. It's not just reading; it's reacting, analyzing, and adding significant original commentary.
+- **Content Style:** Add significant original commentary. Analyze the situation and offer a strong opinion.
 
 **INPUT:**
 - **Web Content:** [{content}]
 
 **TASK: Structure the script EXACTLY as follows:**
 1.  **Intro:** {branded_intro}
-2.  **Main Story Reading (Speaker: narrator):** Read the web content. **CRITICAL: You MUST break the main story reading into multiple script segments, each about 3-5 sentences long. Each of these segments must have its own unique `image_prompt` that describes a distinct visual scene from that specific part of the story.**
-3.  **Extensive Post-Story Commentary (Speaker: commenter1):** After reading the content, provide a detailed, insightful commentary. This should be a significant portion of the script. Analyze the situation and offer a strong opinion.
+2.  **Main Story Reading (Speaker: narrator):** Break the main content into multiple segments.
+3.  **Post-Story Commentary (Speaker: commenter1):** After reading, provide detailed commentary.
 4.  **Outro:** {branded_outro}
 
-**IMAGE PROMPT RULES (Apply to ALL prompts):**
-- **Consistent Style:** Every prompt MUST include one of these style phrases: {image_style}
-- **No Text:** Prompts MUST NOT contain any words, text, or letters.
-- **Variety:** Each prompt should describe a unique scene relevant to its specific text segment.
+**IMAGE PROMPT RULES:**
+- **Style:** Every prompt MUST include one of these styles: {image_style}
+- **No Text:** Prompts MUST NOT contain any words or text.
 
 **OUTPUT FORMAT:**
 Return a valid JSON object strictly following this schema:
@@ -207,11 +198,7 @@ Return a valid JSON object strictly following this schema:
   "script": {{
     "title": "A catchy, viral-style title for the video",
     "scenes": [
-      {{
-        "speaker": "narrator" | "commenter1",
-        "line": "The lines to be spoken.",
-        "image_prompt": "A highly detailed, cinematic prompt for an image, following all rules above."
-      }}
+      {{ "speaker": "narrator" | "commenter1", "line": "...", "image_prompt": "..." }}
     ]
   }}
 }}
@@ -241,7 +228,6 @@ def process_url_content(url):
 # --- Core Video Processing Function ---
 def process_job(job_data):
     job_id = job_data.get('job_id')
-    print(f"\n🚀 Starting job: {job_id}")
     update_status(job_id, "Worker started, preparing assets...")
 
     input_dir = f"./{job_id}_input"
@@ -256,27 +242,24 @@ def process_job(job_data):
         url = job_data.get('url')
         channel_name = job_data.get('channel_name')
         narrator_style = job_data.get('narrator_style')
+        is_short_form = job_data.get('is_short_form', False)
         
         try:
             update_status(job_id, "Scraping the URL...")
             scraped_content = process_url_content(url)
         except Exception as e:
-            update_status(job_id, f"Error: Could not read the URL. Please check the link. Details: {e}", error=True)
+            update_status(job_id, f"Error: Could not read URL. {e}", error=True)
             raise
 
         update_status(job_id, "Generating script with AI...")
-        
         url_type = 'generic'
-        if "reddit.com" in url:
-            url_type = 'reddit'
-        elif "backrooms" in url:
-            url_type = 'backrooms'
-            
-        prompt = generate_dynamic_prompt(url_type, scraped_content, channel_name, narrator_style)
+        if "reddit.com" in url: url_type = 'reddit'
+        elif "backrooms" in url: url_type = 'backrooms'
+        prompt = generate_dynamic_prompt(url_type, scraped_content, channel_name, narrator_style, is_short_form)
         script_data = generate_script_from_prompt(api_key, prompt)
 
         if not script_data:
-            update_status(job_id, "Error: The AI failed to generate a valid script.", error=True)
+            update_status(job_id, "Error: AI failed to generate script.", error=True)
             raise Exception("AI failed to generate script.")
         
         scenes_with_assets = []
@@ -293,7 +276,7 @@ def process_job(job_data):
             voice_name = voice_settings.get(mapped_speaker, voice_settings.get('narrator'))
             image_path = os.path.join(input_dir, f"scene_{i}.png")
             audio_path = os.path.join(input_dir, f"scene_{i}.mp3")
-            generate_image(api_key, scene_script.get('image_prompt'), image_path)
+            generate_image(api_key, scene_script.get('image_prompt'), image_path, is_short_form)
             duration = generate_audio(api_key, scene_script.get('line'), voice_name, audio_path)
             image_url = upload_to_s3(image_path, f"jobs/{job_id}/input/scene_{i}.png")
             audio_url = upload_to_s3(audio_path, f"jobs/{job_id}/input/scene_{i}.mp3")
@@ -318,13 +301,24 @@ def process_job(job_data):
         for i, scene in enumerate(scenes_with_assets):
             duration = scene.get('duration', 1.0)
             intermediate_path = os.path.join(output_dir, f"scene_{i}.mp4")
-            fade_duration = 0.5
             total_frames = int(duration * framerate)
-            filter_complex = (
-                f"[0:v]trim=duration={duration},setpts=PTS-STARTPTS,scale=1280:720,setsar=1[vbase];"
-                f"[vbase]zoompan=z='zoom+0.0005':d={total_frames}:s=1280x720[vzoomed];"
-                f"[vzoomed]fade=in:st=0:d={fade_duration},fade=out:st={duration - fade_duration}:d={fade_duration}[v{i}]"
-            )
+            fade_duration = 0.5
+
+            if is_short_form:
+                # Vertical video (9:16)
+                filter_complex = (
+                    f"[0:v]scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1[vbase];"
+                    f"[vbase]zoompan=z='min(zoom+0.0005,1.5)':d={total_frames}:s=720x1280[vzoomed];"
+                    f"[vzoomed]fade=in:st=0:d={fade_duration},fade=out:st={duration - fade_duration}:d={fade_duration}[v{i}]"
+                )
+            else:
+                # Horizontal video (16:9)
+                filter_complex = (
+                    f"[0:v]scale=1280:720,setsar=1[vbase];"
+                    f"[vbase]zoompan=z='min(zoom+0.0005,1.5)':d={total_frames}:s=1280x720[vzoomed];"
+                    f"[vzoomed]fade=in:st=0:d={fade_duration},fade=out:st={duration - fade_duration}:d={fade_duration}[v{i}]"
+                )
+
             ffmpeg_scene_cmd = [
                 FFMPEG_PATH, '-y', '-loop', '1', '-r', str(framerate), '-i', scene['local_image_path'],
                 '-i', scene['local_audio_path'], '-filter_complex', filter_complex,

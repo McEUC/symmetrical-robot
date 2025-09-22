@@ -32,13 +32,14 @@
         .api-key-group { display: flex; align-items: center; gap: 10px; }
         .api-key-group input[type="password"] { flex-grow: 1; }
         .api-key-group label { display: flex; align-items: center; gap: 5px; font-size: 0.9rem; color: #555; cursor: pointer; }
-        input, select, button { font-size: 1rem; border-radius: 6px; }
-        input[type="text"], input[type="password"], select, input[type="file"] { width: 100%; padding: 10px; border: 1px solid #ddd; box-sizing: border-box; }
+        input, select, button, textarea { font-size: 1rem; border-radius: 6px; }
+        input[type="text"], input[type="password"], select, input[type="file"], textarea { width: 100%; padding: 10px; border: 1px solid #ddd; box-sizing: border-box; }
+        textarea { resize: vertical; min-height: 80px; }
         .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; text-align: left; padding: 1rem; border: 1px solid #e1e1e1; border-radius: 8px; margin-top: 1rem; }
         .settings-grid h3 { grid-column: 1 / -1; text-align: center; margin-top: 0; color: #333; }
-        .voice-selector, .control-group { display: grid; grid-template-columns: 120px 1fr; gap: 10px; align-items: center; }
-        .voice-selector label, .control-group label { font-weight: 500; text-align: right; }
-        button { background-color: #ff4500; color: white; border: none; padding: 12px 20px; font-weight: bold; cursor: pointer; transition: background-color 0.2s; margin-top: 10px; }
+        .control-group { display: grid; grid-template-columns: 120px 1fr; gap: 10px; align-items: center; }
+        .control-group label { font-weight: 500; text-align: right; }
+        button { background-color: #ff4500; color: white; border: none; padding: 12px 20px; font-weight: bold; cursor: pointer; transition: background-color: 0.2s; margin-top: 10px; }
         button:hover:not(:disabled) { background-color: #e03d00; }
         button:disabled { background-color: #cccccc; cursor: not-allowed; }
         #progress-container { width: 100%; background-color: #e0e0e0; border-radius: 4px; margin-top: 1rem; display: none; }
@@ -59,20 +60,43 @@
         </div>
 
         <div class="settings-grid">
+            <h3>Channel & Narrator Settings</h3>
+            <div class="control-group">
+                <label for="channel-name-input">Channel Name:</label>
+                <input type="text" id="channel-name-input" placeholder="(Optional) e.g., 'Net Mysteries'">
+            </div>
+            <div class="control-group">
+                <label for="narrator-style-select">Narrator Style:</label>
+                <select id="narrator-style-select">
+                    <option value="">Default (Neutral)</option>
+                    <option value="Newscaster">Newscaster</option>
+                    <option value="Funny and Energetic">Funny & Energetic</option>
+                    <option value="Documentary Host">Documentary Host</option>
+                    <option value="Spooky Storyteller">Spooky Storyteller</option>
+                    <option value="custom">Custom...</option>
+                </select>
+            </div>
+            <div class="control-group" id="custom-narrator-style-group" style="display: none;">
+                <label for="custom-narrator-style-input">Custom Style:</label>
+                <textarea id="custom-narrator-style-input" placeholder="Describe the narrator's persona, e.g., 'A cynical detective from a 1940s noir film'"></textarea>
+            </div>
+        </div>
+
+        <div class="settings-grid">
              <h3>Audio & Voice Settings</h3>
-            <div class="voice-selector">
+            <div class="control-group">
                 <label for="narrator-voice-select">Narrator:</label>
                 <select id="narrator-voice-select"></select>
             </div>
-             <div class="voice-selector">
+             <div class="control-group">
                 <label for="commenter1-voice-select">Commenter 1:</label>
                 <select id="commenter1-voice-select"></select>
             </div>
-             <div class="voice-selector">
+             <div class="control-group">
                 <label for="commenter2-voice-select">Commenter 2:</label>
                 <select id="commenter2-voice-select"></select>
             </div>
-             <div class="voice-selector">
+             <div class="control-group">
                 <label for="commenter3-voice-select">Commenter 3:</label>
                 <select id="commenter3-voice-select"></select>
             </div>
@@ -131,6 +155,10 @@
             statusLog: document.getElementById('status-log'),
             bgMusicInput: document.getElementById('bg-music-input'),
             bgMusicVolume: document.getElementById('bg-music-volume'),
+            channelNameInput: document.getElementById('channel-name-input'),
+            narratorStyleSelect: document.getElementById('narrator-style-select'),
+            customNarratorStyleGroup: document.getElementById('custom-narrator-style-group'),
+            customNarratorStyleInput: document.getElementById('custom-narrator-style-input'),
             voiceSelectors: {
                 narrator: document.getElementById('narrator-voice-select'),
                 commenter1: document.getElementById('commenter1-voice-select'),
@@ -157,9 +185,8 @@
             { name: 'en-US-Wavenet-D', gender: 'Male', type: 'WaveNet' },
             { name: 'en-US-Wavenet-F', gender: 'Female', type: 'WaveNet' },
             { name: 'en-GB-Wavenet-F', gender: 'Female', type: 'WaveNet' },
-            // NEW VOICES ADDED
-            { name: 'en-US-Chirp3-HD-Achernar', gender: 'Female', type: 'Chirp' },
-            { name: 'en-US-Chirp3-HD-Enceladus', gender: 'Male', type: 'Chirp' }
+            { name: 'en-US-Chirp-Standard-F', gender: 'Female', type: 'Chirp' },
+            { name: 'en-US-Chirp-Standard-G', gender: 'Male', type: 'Chirp' }
         ];
 
         function populateVoiceSelectors() {
@@ -184,11 +211,10 @@
                 const selector = DOMElements.voiceSelectors[key];
                 selector.innerHTML = optionsHtml;
             }
-            // Set default voices
             DOMElements.voiceSelectors.narrator.value = 'en-US-Studio-Q';
             DOMElements.voiceSelectors.commenter1.value = 'en-US-Journey-D';
-            DOMElements.voiceSelectors.commenter2.value = 'en-US-Chirp3-HD-Achernar';
-            DOMElements.voiceSelectors.commenter3.value = 'en-US-Chirp3-HD-Enceladus';
+            DOMElements.voiceSelectors.commenter2.value = 'en-US-Chirp-Standard-F';
+            DOMElements.voiceSelectors.commenter3.value = 'en-US-Chirp-Standard-G';
         }
 
         const logStatus = (message) => {
@@ -212,6 +238,14 @@
             if (DOMElements.saveApiKeyCheckbox.checked) { localStorage.setItem('googleApiKey', DOMElements.apiKeyInput.value); } 
             else { localStorage.removeItem('googleApiKey'); }
         });
+
+        DOMElements.narratorStyleSelect.addEventListener('change', () => {
+            if (DOMElements.narratorStyleSelect.value === 'custom') {
+                DOMElements.customNarratorStyleGroup.style.display = 'grid';
+            } else {
+                DOMElements.customNarratorStyleGroup.style.display = 'none';
+            }
+        });
         
         DOMElements.generateBtn.addEventListener('click', async () => {
             const url = DOMElements.urlInput.value.trim();
@@ -233,6 +267,14 @@
             const formData = new FormData();
             formData.append('url', url);
             formData.append('apiKey', apiKey);
+
+            formData.append('channelName', DOMElements.channelNameInput.value.trim());
+            let narratorStyle = DOMElements.narratorStyleSelect.value;
+            if (narratorStyle === 'custom') {
+                narratorStyle = DOMElements.customNarratorStyleInput.value.trim();
+            }
+            formData.append('narratorStyle', narratorStyle);
+
             const voiceSettings = {};
             for (const key in DOMElements.voiceSelectors) {
                 voiceSettings[key] = DOMElements.voiceSelectors[key].value;
@@ -330,3 +372,4 @@
     </script>
 </body>
 </html>
+

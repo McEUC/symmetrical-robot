@@ -87,7 +87,6 @@ def generate_image(api_key, prompt, output_path):
     for attempt in range(max_retries):
         try:
             vertexai.init(project=GCP_PROJECT_ID)
-            
             model = ImageGenerationModel.from_pretrained("imagegeneration@006")
             images = model.generate_images(prompt=current_prompt, number_of_images=1, aspect_ratio="16:9", negative_prompt="text, letters, words, watermark, signature, logo")
             if images:
@@ -154,46 +153,59 @@ def generate_audio(api_key, text, voice_name, output_path):
     result = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', output_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return float(result.stdout.strip())
 
-# --- URL PROCESSING FUNCTIONS ---
-def process_reddit_thread(url, api_key):
-    """Scrapes a Reddit thread by fetching its HTML and extracting text."""
-    print(f"Processing Reddit URL using HTML scraping: {url}")
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-    page = requests.get(url, headers=headers, timeout=15)
-    page.raise_for_status()
-    soup = BeautifulSoup(page.content, 'html.parser')
+# --- DYNAMIC PROMPT GENERATION ---
+def generate_dynamic_prompt(url_type, content, channel_name, narrator_style):
     
-    title_tag = soup.find('h1') or soup.find('h2') or soup.find('title')
-    title = title_tag.get_text(strip=True) if title_tag else 'No Title Found'
-    
-    for element in soup(['script', 'style', 'nav', 'header', 'footer', 'aside']):
-        element.decompose()
-    post_text = soup.get_text(separator=' ', strip=True)
-    
-    full_text = f"Title: {title}. Post Content: {post_text}"
-    print(f"Extracted Reddit content: {full_text[:300]}...")
+    style_instruction = ""
+    if narrator_style:
+        style_instruction = f"""
+- **Host Persona:** You are a narrator with a '{narrator_style}' style. Your tone should be consistent with this description throughout the script.
+"""
+    else:
+        style_instruction = "- **Host Persona:** You are a neutral, informative narrator."
+
+    # --- FIX: Using triple-quotes for robustness ---
+    branded_intro = ""
+    branded_outro = ""
+    if channel_name:
+        branded_intro = f"""Start with the line: "Welcome back to {channel_name}, where we dive headfirst into the best stories the internet has to offer." """
+        branded_outro = f"""End the video with the exact lines: "And that's all the time we have for today on {channel_name}. If you liked this story, be sure to hit that subscribe button. Until next time, stay curious." """
+    else:
+        branded_intro = "Start the video with a compelling, short hook (1-2 sentences) that teases the main story's theme or conflict."
+        branded_outro = "End the video with a concluding thought or a question for the viewer."
+
+    image_style = "'A vibrant and detailed digital illustration in a classic Japanese anime style.'"
+    if url_type == 'backrooms':
+        image_style = "'A grainy, unsettling, found-footage style photograph' OR 'A hyper-realistic, liminal space digital painting'."
+    elif url_type == 'generic':
+        image_style = "'A cinematic, hyper-realistic digital painting with dramatic lighting'."
 
     prompt = f"""
-"ACT as a witty, opinionated, and funny YouTube host for the channel 'Tales from the Upboat'. Your task is to create an engaging video script based on a Reddit post.
-**Channel Style:**
-- **Host Persona:** You are sharp, humorous, and not afraid to share your personal take.
+ACT as a YouTube host. Your task is to create an engaging video script based on the provided web content.
+
+**Channel & Host Style:**
+{style_instruction}
 - **Content Style:** The video should feel like a conversation. It's not just reading; it's reacting, analyzing, and adding significant original commentary.
+
 **INPUT:**
-- **Reddit Content (Title and Post):** [{full_text}]
+- **Web Content:** [{content}]
+
 **TASK: Structure the script EXACTLY as follows:**
-1.  **Branded Intro (Speaker: narrator):** Start with the line: "Welcome back to Tales from the Upboat, where we dive headfirst into the best stories the internet has to offer."
-2.  **Hook (Speaker: narrator):** Create a compelling, short hook (1-2 sentences) that teases the main story's theme or conflict based on the title.
-3.  **Main Story Reading (Speaker: narrator):** Read the Reddit post content. **CRITICAL: You MUST break the main story reading into multiple script segments, each about 3-5 sentences long. Each of these segments must have its own unique `image_prompt` that describes a distinct visual scene from that specific part of the story.**
-4.  **Extensive Post-Story Commentary (Speaker: commenter1):** After reading the post, provide a detailed, funny, and insightful commentary. This should be a significant portion of the script. Analyze the situation, share a personal anecdote, and offer a strong opinion.
-5.  **Branded Outro (Speaker: narrator):** End the video with the exact lines: "And that's all the time we have for today on Tales from the Upboat. If you liked this story, be sure to hit that subscribe button and ring the bell so you don't miss the next one. Until next time, stay curious and keep scrolling."
+1.  **Intro:** {branded_intro}
+2.  **Main Story Reading (Speaker: narrator):** Read the web content. **CRITICAL: You MUST break the main story reading into multiple script segments, each about 3-5 sentences long. Each of these segments must have its own unique `image_prompt` that describes a distinct visual scene from that specific part of the story.**
+3.  **Extensive Post-Story Commentary (Speaker: commenter1):** After reading the content, provide a detailed, insightful commentary. This should be a significant portion of the script. Analyze the situation and offer a strong opinion.
+4.  **Outro:** {branded_outro}
+
 **IMAGE PROMPT RULES (Apply to ALL prompts):**
-- **Consistent Style:** Every prompt MUST include these keywords: 'A vibrant and detailed digital illustration in a classic Japanese anime style.' The image_prompt field must always contain a string describing the scene and cannot be null.
-- **No Text:** Prompts MUST NOT contain any words, text, or letters. The final image should be purely visual.
+- **Consistent Style:** Every prompt MUST include one of these style phrases: {image_style}
+- **No Text:** Prompts MUST NOT contain any words, text, or letters.
+- **Variety:** Each prompt should describe a unique scene relevant to its specific text segment.
+
 **OUTPUT FORMAT:**
 Return a valid JSON object strictly following this schema:
 {{
   "script": {{
-    "title": "A catchy, viral-style title for the video based on the post",
+    "title": "A catchy, viral-style title for the video",
     "scenes": [
       {{
         "speaker": "narrator" | "commenter1",
@@ -204,78 +216,27 @@ Return a valid JSON object strictly following this schema:
   }}
 }}
 """
-    return generate_script_from_prompt(api_key, prompt)
+    return prompt
 
-def process_generic_url(url, api_key):
-    """Scrapes a generic webpage and generates a documentary-style script."""
-    print(f"Processing generic URL: {url}")
+# --- URL PROCESSING FUNCTION ---
+def process_url_content(url):
+    """Universal function to scrape content from any URL."""
+    print(f"Processing URL: {url}")
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
     page = requests.get(url, headers=headers, timeout=15)
     page.raise_for_status()
     soup = BeautifulSoup(page.content, 'html.parser')
-
-    page_title_tag = soup.find('h1') or soup.find('title')
-    page_title = page_title_tag.get_text(strip=True) if page_title_tag else url
+    
+    title_tag = soup.find('h1') or soup.find('h2') or soup.find('title')
+    title = title_tag.get_text(strip=True) if title_tag else 'No Title Found'
     
     for element in soup(['script', 'style', 'nav', 'header', 'footer', 'aside']):
         element.decompose()
-    page_text = soup.get_text(separator=' ', strip=True)[:8000]
-    if not page_text:
-        raise Exception("Could not extract any text from the URL.")
-    print(f"Extracted title: {page_title} and {len(page_text)} characters of text.")
-
-    prompt = f"""
-ACT as the host of 'Web Weaver,' a YouTube channel that transforms articles and web content into compelling visual stories.
-**Channel Style:**
-- **Host Persona:** You are a thoughtful and engaging documentarian. Your tone is clear, informative, and slightly dramatic.
-- **Content Style:** Synthesize, paraphrase, and dramatize the provided text. Weave the key facts into a cohesive narrative.
-**INPUT:**
-- **Article Title:** [{page_title}]
-- **Article Content:** [{page_text}]
-**TASK: Structure the script EXACTLY as follows:**
-1.  **Script Length:** Generate between 10 and 15 scenes.
-2.  **Branded Intro (Speaker: narrator):** Start with: "In the vast network of information that is our world, some stories are waiting in plain sight. Welcome to Web Weaver, where we unravel the code of content to bring you the story within."
-3.  **Hook (Speaker: narrator):** Create an engaging hook (2-3 sentences) that introduces '{page_title}'.
-4.  **Content Weaving (Multiple Scenes):**
-    -   **Information Synthesis (Speaker: narrator):** Rephrase and narrate the key information from the article in your own documentary style.
-    -   **Insightful Analysis (Speaker: commenter1):** After presenting a key piece of information, provide analysis that explains its importance or context.
-5.  **Branded Outro (Speaker: narrator):** End with: "The story doesn't end here; it's just one thread in a much larger tapestry. Thanks for joining us on Web Weaver. Stay curious, and keep exploring."
-**IMAGE PROMPT RULES (Apply to ALL prompts):**
--   **Consistent Style:** Every prompt MUST include the phrase: 'A cinematic, hyper-realistic digital painting with dramatic lighting'.
--   **No Text:** Prompts MUST NOT contain any words, text, or letters.
-Respond ONLY with a valid JSON object in the format: {{"scenes": [{{"speaker": "narrator", "line": "Dialogue.", "image_prompt": "Image prompt."}}]}}
-"""
-    return generate_script_from_prompt(api_key, prompt)
-
-def process_backrooms_wiki(url, api_key):
-    """Scrapes a Backrooms wiki page and generates a script."""
-    print("Processing Backrooms Wiki URL...")
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-    page = requests.get(url, headers=headers, timeout=10)
-    page.raise_for_status()
-    soup = BeautifulSoup(page.content, 'html.parser')
-    article_title = soup.title.string.replace(" Wiki | Fandom", "").strip() if soup.title and soup.title.string else "Backrooms Level"
+    body_text = soup.get_text(separator=' ', strip=True)
     
-    content_div = soup.find('div', class_='mw-parser-output')
-    if not content_div:
-        raise Exception("Could not find the main content area ('mw-parser-output') on the wiki page.")
-    wiki_text = content_div.get_text(separator=' ', strip=True)[:6000]
-    
-    prompt = f"""
-ACT as the host of 'Liminal Echoes,' a YouTube channel that explores the unsettling depths of the Backrooms. Your task is to transform a dry wiki article into a chilling, narrative-driven video script.
-**Channel Style:**- **Host Persona:** You are a haunted storyteller. Your tone is hushed, conspiratorial, and filled with a sense of dread. You speak as if you are sharing forbidden knowledge that has taken a toll on you. You are not a simple narrator; you are an interpreter of the abyss.- **Content Style:** The video MUST NOT read the wiki word-for-word. Instead, you will synthesize, paraphrase, and dramatize the information. Weave the facts from the wiki into a creepy, first-person or second-person narrative. The script must be dominated by your original, unsettling commentary which should connect different pieces of information on the page to build a cohesive sense of horror.
-**INPUT:**- **Wiki Article Title:** [{article_title}]- **Wiki Article Content:** [{wiki_text}]
-**TASK: Structure the script EXACTLY as follows:**
-1.  **Script Length:** The final script should be substantial. Generate between 12 and 18 scenes to create a video with a total runtime between 5 and 8 minutes.
-2.  **Branded Intro (Speaker: narrator):** Start with the exact line: "Listen closely. Can you hear it? That hum in the static between worlds? Welcome back to Liminal Echoes, where we give voice to the silence of places that shouldn't exist."
-3.  **Hook (Speaker: narrator):** Create a deeply unsettling hook (2-3 sentences) that introduces '{article_title}' by asking a disturbing question or painting a chilling mental image for the viewer.
-4.  **Content Weaving Loop:** Your primary task is to process the wiki article section by section (e.g., Description, Entities, Entrances, Exits). For each section, create a two-part sequence:    -   **Information Synthesis (Speaker: narrator):** **DO NOT READ THE WIKI VERBATIM.** You must rephrase and narrate the key information from the wiki section in your own creepy style. Describe it as if you are seeing it, or as if the viewer is the one trapped there. For example, instead of 'The walls are yellow,' say 'An endless, sickening yellow stains the walls, the color of old bruises and decay...'    -   **Unsettling Analysis (Speaker: commenter1):** Immediately after synthesizing a piece of information, provide extensive, creepy, and speculative analysis. This is the heart of the video. Question the 'why'. Speculate on the malevolent intelligence behind the architecture. Connect the description of the level to the entities found within it. Discuss the psychological toll it would take. Ask disturbing rhetorical questions that linger with the viewer.
-5.  **Branded Outro (Speaker: narrator):** End the video with the exact lines: "The information stops here, but the feeling doesn't. Be wary of the quiet places and the patterns you start to see in the static. The echoes are always listening. Until next time, try not to get lost."
-**IMAGE PROMPT RULES (Apply to ALL prompts):**-   **Consistent Style:** Every prompt MUST include ONE of these two style phrases: 'A grainy, unsettling, found-footage style photograph' OR 'A hyper-realistic, liminal space digital painting'. The image_prompt field must always contain a string describing the scene and cannot be null.-   **Atmosphere:** Prompts should focus on creating feelings of dread, isolation, and cosmic horror. Describe empty spaces, strange architecture, distorted figures in the distance, and analog-style visual artifacts.-   **No Text:** Prompts MUST NOT contain any words, text, or letters.
-Respond ONLY with a valid JSON object in the format: {{"scenes": [{{"speaker": "narrator", "line": "Dialogue.", "image_prompt": "Image prompt."}}]}}
-"""
-    return generate_script_from_prompt(api_key, prompt)
-
+    full_text = f"Title: {title}. Content: {body_text}"
+    print(f"Extracted content: {full_text[:300]}...")
+    return full_text
 
 # --- Core Video Processing Function ---
 def process_job(job_data):
@@ -293,23 +254,30 @@ def process_job(job_data):
     try:
         api_key = job_data.get('api_key')
         url = job_data.get('url')
+        channel_name = job_data.get('channel_name')
+        narrator_style = job_data.get('narrator_style')
         
         try:
             update_status(job_id, "Scraping the URL...")
-            if "reddit.com" in url:
-                script_data = process_reddit_thread(url, api_key)
-            elif "backrooms" in url and ("wiki" in url or "fandom" in url):
-                script_data = process_backrooms_wiki(url, api_key)
-            else:
-                script_data = process_generic_url(url, api_key)
+            scraped_content = process_url_content(url)
         except Exception as e:
-            update_status(job_id, f"Error: Could not read or process the URL. Please check if the link is valid and public. Details: {e}", error=True)
+            update_status(job_id, f"Error: Could not read the URL. Please check the link. Details: {e}", error=True)
             raise
 
         update_status(job_id, "Generating script with AI...")
+        
+        url_type = 'generic'
+        if "reddit.com" in url:
+            url_type = 'reddit'
+        elif "backrooms" in url:
+            url_type = 'backrooms'
+            
+        prompt = generate_dynamic_prompt(url_type, scraped_content, channel_name, narrator_style)
+        script_data = generate_script_from_prompt(api_key, prompt)
+
         if not script_data:
-            update_status(job_id, "Error: The AI failed to generate a valid script from the URL content.", error=True)
-            raise Exception("The AI failed to generate a valid script.")
+            update_status(job_id, "Error: The AI failed to generate a valid script.", error=True)
+            raise Exception("AI failed to generate script.")
         
         scenes_with_assets = []
         voice_settings = job_data.get('voice_settings', {})
@@ -317,29 +285,21 @@ def process_job(job_data):
 
         for i, scene_script in enumerate(script_data):
             update_status(job_id, f"Generating assets for scene {i+1} of {len(script_data)}...")
-            
             speaker_key = scene_script.get('speaker', 'narrator').lower()
             if speaker_key.startswith('commenter'):
                 if speaker_key not in speaker_map:
                     speaker_map[speaker_key] = f'commenter{len(speaker_map) + 1}'
             mapped_speaker = speaker_map.get(speaker_key, speaker_key)
             voice_name = voice_settings.get(mapped_speaker, voice_settings.get('narrator'))
-            
             image_path = os.path.join(input_dir, f"scene_{i}.png")
             audio_path = os.path.join(input_dir, f"scene_{i}.mp3")
-
             generate_image(api_key, scene_script.get('image_prompt'), image_path)
             duration = generate_audio(api_key, scene_script.get('line'), voice_name, audio_path)
-            
             image_url = upload_to_s3(image_path, f"jobs/{job_id}/input/scene_{i}.png")
             audio_url = upload_to_s3(audio_path, f"jobs/{job_id}/input/scene_{i}.mp3")
-            
             scenes_with_assets.append({
-                'duration': duration,
-                'image_url': image_url,
-                'audio_url': audio_url,
-                'local_image_path': image_path,
-                'local_audio_path': audio_path
+                'duration': duration, 'image_url': image_url, 'audio_url': audio_url,
+                'local_image_path': image_path, 'local_audio_path': audio_path
             })
         
         update_status(job_id, "All assets generated, preparing for video render...")
@@ -349,7 +309,6 @@ def process_job(job_data):
             bg_music_key = urlparse(job_data['background_music_url']).path.lstrip('/')
             local_bg_music_path = os.path.join(input_dir, "bg_music.mp3")
             s3.download_file(AWS_S3_BUCKET_NAME, bg_music_key, local_bg_music_path)
-            print("Background music downloaded.")
 
         update_status(job_id, "Building video clips...")
         intermediate_video_paths = []
@@ -359,27 +318,18 @@ def process_job(job_data):
         for i, scene in enumerate(scenes_with_assets):
             duration = scene.get('duration', 1.0)
             intermediate_path = os.path.join(output_dir, f"scene_{i}.mp4")
-            
             fade_duration = 0.5
             total_frames = int(duration * framerate)
-
             filter_complex = (
                 f"[0:v]trim=duration={duration},setpts=PTS-STARTPTS,scale=1280:720,setsar=1[vbase];"
                 f"[vbase]zoompan=z='zoom+0.0005':d={total_frames}:s=1280x720[vzoomed];"
                 f"[vzoomed]fade=in:st=0:d={fade_duration},fade=out:st={duration - fade_duration}:d={fade_duration}[v{i}]"
             )
-            
             ffmpeg_scene_cmd = [
-                FFMPEG_PATH, '-y',
-                '-loop', '1', '-r', str(framerate), '-i', scene['local_image_path'],
-                '-i', scene['local_audio_path'],
-                '-filter_complex', filter_complex,
-                '-map', f'[v{i}]',
-                '-map', '1:a',
-                '-c:v', 'libx264', '-preset', 'fast',
-                '-pix_fmt', 'yuv420p',
-                '-c:a', 'aac', '-t', str(duration),
-                intermediate_path
+                FFMPEG_PATH, '-y', '-loop', '1', '-r', str(framerate), '-i', scene['local_image_path'],
+                '-i', scene['local_audio_path'], '-filter_complex', filter_complex,
+                '-map', f'[v{i}]', '-map', '1:a', '-c:v', 'libx264', '-preset', 'fast',
+                '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-t', str(duration), intermediate_path
             ]
             subprocess.run(ffmpeg_scene_cmd, check=True, capture_output=True, text=True)
             intermediate_video_paths.append(intermediate_path)
@@ -399,15 +349,10 @@ def process_job(job_data):
             update_status(job_id, "Adding background music...")
             music_volume = int(caption_settings.get('musicVolume', 13)) / 100.0
             mix_filter = f"[1:a]volume={music_volume}[bga];[0:a][bga]amix=inputs=2:duration=first[a]"
-            
             ffmpeg_mix_cmd = [
-                FFMPEG_PATH, '-y',
-                '-i', video_no_music_path,
-                '-i', local_bg_music_path,
-                '-filter_complex', mix_filter,
-                '-map', '0:v', '-map', '[a]',
-                '-c:v', 'copy', '-c:a', 'aac', '-shortest',
-                final_video_path
+                FFMPEG_PATH, '-y', '-i', video_no_music_path, '-i', local_bg_music_path,
+                '-filter_complex', mix_filter, '-map', '0:v', '-map', '[a]',
+                '-c:v', 'copy', '-c:a', 'aac', '-shortest', final_video_path
             ]
             subprocess.run(ffmpeg_mix_cmd, check=True, capture_output=True, text=True)
         else:
@@ -429,7 +374,6 @@ def process_job(job_data):
                 update_status(job_id, error_message, error=True)
         except Exception:
             update_status(job_id, error_message, error=True)
-
         print(f"❌ ERROR processing job {job_id}: {e}")
         if isinstance(e, subprocess.CalledProcessError):
             print("--- FFMPEG STDERR ---")
@@ -451,13 +395,12 @@ if __name__ == "__main__":
     local_job_path = f"/tmp/{JOB_ID}.json"
     
     try:
-        print(f"Fetching job details from S3: {job_key}")
         s3_main.download_file(AWS_S3_BUCKET_NAME, job_key, local_job_path)
         with open(local_job_path) as f:
             job_details = json.load(f)
-        
         process_job(job_details)
     except Exception as e:
         print(f"❌ ERROR: Failed to fetch or run job. Error: {e}")
         update_status(JOB_ID, f"Failed to start job: {e}", error=True)
         sys.exit(1)
+

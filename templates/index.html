@@ -193,18 +193,21 @@
 
         const logStatus = (message) => {
             const p = document.createElement('p');
-            p.innerHTML = message;
+            p.innerHTML = `[${new Date().toLocaleTimeString()}] ${message}`;
             p.style.margin = '2px 0';
             DOMElements.statusLog.insertBefore(p, DOMElements.statusLog.firstChild);
         };
+
         const updateProgress = (percentage, text) => {
             DOMElements.progressBar.style.width = `${percentage}%`;
             DOMElements.progressBar.textContent = text || `${percentage}%`;
         };
+
         function loadApiKey() {
             const savedKey = localStorage.getItem('googleApiKey');
             if (savedKey) { DOMElements.apiKeyInput.value = savedKey; DOMElements.saveApiKeyCheckbox.checked = true; }
         }
+
         DOMElements.saveApiKeyCheckbox.addEventListener('change', () => {
             if (DOMElements.saveApiKeyCheckbox.checked) { localStorage.setItem('googleApiKey', DOMElements.apiKeyInput.value); } 
             else { localStorage.removeItem('googleApiKey'); }
@@ -261,13 +264,15 @@
                 }
                 
                 const { jobId } = result;
-                logStatus(`✅ Job submitted! ID: ${jobId}. Waiting for worker...`);
-                updateProgress(25, 'Waiting for Worker...');
+                logStatus(`✅ Job submitted! ID: ${jobId}`);
+                updateProgress(20, 'Waiting for Worker...');
                 
                 pollInterval = setInterval(async () => {
                     try {
                         const statusResponse = await fetch(`/status/${jobId}`);
                         const statusResult = await statusResponse.json();
+
+                        const message = statusResult.message || 'Processing...';
 
                         if (statusResult.status === 'done') {
                             clearInterval(pollInterval);
@@ -284,16 +289,24 @@
                             DOMElements.generateBtn.disabled = false;
                             DOMElements.generateBtn.textContent = 'Generate Video';
 
-                        } else if (statusResult.status === 'pending') {
-                            logStatus('⏳ Processing on the worker...');
+                        } else if (statusResult.status === 'failed') {
+                            clearInterval(pollInterval);
+                            DOMElements.progressBar.style.backgroundColor = '#dc3545';
+                            updateProgress(100, 'Error!');
+                            logStatus(`❌ <span style="color:red;">Job Failed: ${message}</span>`);
+                            DOMElements.generateBtn.disabled = false;
+                            DOMElements.generateBtn.textContent = 'Generate Video';
+
+                        } else if (statusResult.status === 'in_progress') {
+                            logStatus(`⏳ ${message}`);
                             const currentWidth = parseFloat(DOMElements.progressBar.style.width);
-                            if (currentWidth < 90) {
-                                updateProgress(currentWidth + 5, 'Processing...');
+                            if (currentWidth < 95) {
+                                updateProgress(currentWidth + 2, message);
                             }
-                        } else {
-                             clearInterval(pollInterval);
-                             throw new Error(statusResult.message || 'Polling returned an error.');
+                        } else { // 'pending'
+                             logStatus(`⏳ ${message}`);
                         }
+                        
                     } catch (pollError) {
                         clearInterval(pollInterval);
                         throw pollError;
@@ -317,10 +330,3 @@
     </script>
 </body>
 </html>
-
-
-
-
-
-
-        

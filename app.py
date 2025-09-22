@@ -84,16 +84,26 @@ def handle_video_generation():
 @app.route('/status/<job_id>', methods=['GET'])
 def get_status(job_id):
     s3_client = boto3.client('s3', aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
+    
+    # First, check if the final video exists (the ultimate success signal)
     try:
         video_object_key = f"jobs/{job_id}/output/final_video.mp4"
         s3_client.head_object(Bucket=AWS_S3_BUCKET_NAME, Key=video_object_key)
         video_url = f"https://{AWS_S3_BUCKET_NAME}.s3.amazonaws.com/{video_object_key}"
         return jsonify({"status": "done", "downloadUrl": video_url})
-    except s3_client.exceptions.ClientError as e:
-        if e.response['Error']['Code'] == '404':
-            return jsonify({"status": "pending"})
-        else:
-            return jsonify({"status": "error", "message": str(e)})
+    except s3_client.exceptions.ClientError:
+        # Video not found, so let's check for a progress/status file
+        pass
+
+    # Check for the status.json file for progress updates
+    try:
+        status_object_key = f"jobs/{job_id}/status.json"
+        status_obj = s3_client.get_object(Bucket=AWS_S3_BUCKET_NAME, Key=status_object_key)
+        status_data = json.loads(status_obj['Body'].read().decode('utf-8'))
+        return jsonify(status_data)
+    except s3_client.exceptions.ClientError:
+        # No status file yet, so the job is still in the initial pending state
+        return jsonify({"status": "pending", "message": "Job is queued and waiting for the worker..."})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

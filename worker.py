@@ -20,7 +20,25 @@ AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
 AWS_S3_BUCKET_NAME = os.environ.get('AWS_S3_BUCKET_NAME')
 JOB_ID = os.environ.get('JOB_ID')
 FFMPEG_PATH = "ffmpeg"
-GCP_PROJECT_ID = os.environ.get('GCP_PROJECT_ID') # Add this line
+GCP_PROJECT_ID = os.environ.get('GCP_PROJECT_ID')
+
+# --- Status Reporting Function ---
+def update_status(job_id, message, error=False):
+    """Creates or updates a status.json file in S3 for the job."""
+    s3_client = boto3.client('s3', aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
+    status_data = {
+        "status": "failed" if error else "in_progress",
+        "message": message,
+        "timestamp": time.time()
+    }
+    status_key = f"jobs/{job_id}/status.json"
+    s3_client.put_object(
+        Bucket=AWS_S3_BUCKET_NAME,
+        Key=status_key,
+        Body=json.dumps(status_data),
+        ContentType='application/json'
+    )
+    print(f"Status update: {message}")
 
 # --- HELPER FUNCTIONS ---
 def upload_to_s3(file_path, object_name):
@@ -68,7 +86,6 @@ def generate_image(api_key, prompt, output_path):
     current_prompt = prompt
     for attempt in range(max_retries):
         try:
-            # MODIFIED LINE: Initialize with the project ID
             vertexai.init(project=GCP_PROJECT_ID)
             
             model = ImageGenerationModel.from_pretrained("imagegeneration@006")
@@ -79,7 +96,6 @@ def generate_image(api_key, prompt, output_path):
                 return
             raise Exception("API returned an empty list of images.")
         except Exception as e:
-            # ... (the rest of the function is unchanged) ...
             print(f"Imagen API call failed (attempt {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
                 print("Attempting to rewrite prompt to be safer...")
@@ -142,23 +158,20 @@ def generate_audio(api_key, text, voice_name, output_path):
 def process_reddit_thread(url, api_key):
     """Scrapes a Reddit thread by fetching its HTML and extracting text."""
     print(f"Processing Reddit URL using HTML scraping: {url}")
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        page = requests.get(url, headers=headers, timeout=15)
-        page.raise_for_status()
-        soup = BeautifulSoup(page.content, 'html.parser')
-        
-        title_tag = soup.find('h1') or soup.find('h2') or soup.find('title')
-        title = title_tag.get_text(strip=True) if title_tag else 'No Title Found'
-        
-        for element in soup(['script', 'style', 'nav', 'header', 'footer', 'aside']):
-            element.decompose()
-        post_text = soup.get_text(separator=' ', strip=True)
-        
-        full_text = f"Title: {title}. Post Content: {post_text}"
-        print(f"Extracted Reddit content: {full_text[:300]}...")
-    except requests.RequestException as e:
-        raise Exception(f"Failed to fetch the Reddit URL: {e}")
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+    page = requests.get(url, headers=headers, timeout=15)
+    page.raise_for_status()
+    soup = BeautifulSoup(page.content, 'html.parser')
+    
+    title_tag = soup.find('h1') or soup.find('h2') or soup.find('title')
+    title = title_tag.get_text(strip=True) if title_tag else 'No Title Found'
+    
+    for element in soup(['script', 'style', 'nav', 'header', 'footer', 'aside']):
+        element.decompose()
+    post_text = soup.get_text(separator=' ', strip=True)
+    
+    full_text = f"Title: {title}. Post Content: {post_text}"
+    print(f"Extracted Reddit content: {full_text[:300]}...")
 
     prompt = f"""
 "ACT as a witty, opinionated, and funny YouTube host for the channel 'Tales from the Upboat'. Your task is to create an engaging video script based on a Reddit post.
@@ -196,23 +209,20 @@ Return a valid JSON object strictly following this schema:
 def process_generic_url(url, api_key):
     """Scrapes a generic webpage and generates a documentary-style script."""
     print(f"Processing generic URL: {url}")
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        page = requests.get(url, headers=headers, timeout=15)
-        page.raise_for_status()
-        soup = BeautifulSoup(page.content, 'html.parser')
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+    page = requests.get(url, headers=headers, timeout=15)
+    page.raise_for_status()
+    soup = BeautifulSoup(page.content, 'html.parser')
 
-        page_title_tag = soup.find('h1') or soup.find('title')
-        page_title = page_title_tag.get_text(strip=True) if page_title_tag else url
-        
-        for element in soup(['script', 'style', 'nav', 'header', 'footer', 'aside']):
-            element.decompose()
-        page_text = soup.get_text(separator=' ', strip=True)[:8000]
-        if not page_text:
-            raise Exception("Could not extract any text from the URL.")
-        print(f"Extracted title: {page_title} and {len(page_text)} characters of text.")
-    except requests.RequestException as e:
-        raise Exception(f"Failed to fetch the URL: {e}")
+    page_title_tag = soup.find('h1') or soup.find('title')
+    page_title = page_title_tag.get_text(strip=True) if page_title_tag else url
+    
+    for element in soup(['script', 'style', 'nav', 'header', 'footer', 'aside']):
+        element.decompose()
+    page_text = soup.get_text(separator=' ', strip=True)[:8000]
+    if not page_text:
+        raise Exception("Could not extract any text from the URL.")
+    print(f"Extracted title: {page_title} and {len(page_text)} characters of text.")
 
     prompt = f"""
 ACT as the host of 'Web Weaver,' a YouTube channel that transforms articles and web content into compelling visual stories.
@@ -240,19 +250,16 @@ Respond ONLY with a valid JSON object in the format: {{"scenes": [{{"speaker": "
 def process_backrooms_wiki(url, api_key):
     """Scrapes a Backrooms wiki page and generates a script."""
     print("Processing Backrooms Wiki URL...")
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        page = requests.get(url, headers=headers, timeout=10)
-        page.raise_for_status()
-        soup = BeautifulSoup(page.content, 'html.parser')
-        article_title = soup.title.string.replace(" Wiki | Fandom", "").strip() if soup.title and soup.title.string else "Backrooms Level"
-        
-        content_div = soup.find('div', class_='mw-parser-output')
-        if not content_div:
-            raise Exception("Could not find the main content area ('mw-parser-output') on the wiki page.")
-        wiki_text = content_div.get_text(separator=' ', strip=True)[:6000]
-    except requests.RequestException as e:
-        raise Exception(f"Failed to fetch the Backrooms Wiki URL: {e}")
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+    page = requests.get(url, headers=headers, timeout=10)
+    page.raise_for_status()
+    soup = BeautifulSoup(page.content, 'html.parser')
+    article_title = soup.title.string.replace(" Wiki | Fandom", "").strip() if soup.title and soup.title.string else "Backrooms Level"
+    
+    content_div = soup.find('div', class_='mw-parser-output')
+    if not content_div:
+        raise Exception("Could not find the main content area ('mw-parser-output') on the wiki page.")
+    wiki_text = content_div.get_text(separator=' ', strip=True)[:6000]
     
     prompt = f"""
 ACT as the host of 'Liminal Echoes,' a YouTube channel that explores the unsettling depths of the Backrooms. Your task is to transform a dry wiki article into a chilling, narrative-driven video script.
@@ -274,6 +281,7 @@ Respond ONLY with a valid JSON object in the format: {{"scenes": [{{"speaker": "
 def process_job(job_data):
     job_id = job_data.get('job_id')
     print(f"\n🚀 Starting job: {job_id}")
+    update_status(job_id, "Worker started, preparing assets...")
 
     input_dir = f"./{job_id}_input"
     output_dir = f"./{job_id}_output"
@@ -283,19 +291,24 @@ def process_job(job_data):
     s3 = boto3.client('s3', aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
     
     try:
-        # --- PART 1: ASSET GENERATION ---
-        print("🤖 Generating script and assets...")
         api_key = job_data.get('api_key')
         url = job_data.get('url')
         
-        if "reddit.com" in url:
-            script_data = process_reddit_thread(url, api_key)
-        elif "backrooms" in url and ("wiki" in url or "fandom" in url):
-            script_data = process_backrooms_wiki(url, api_key)
-        else:
-            script_data = process_generic_url(url, api_key)
+        try:
+            update_status(job_id, "Scraping the URL...")
+            if "reddit.com" in url:
+                script_data = process_reddit_thread(url, api_key)
+            elif "backrooms" in url and ("wiki" in url or "fandom" in url):
+                script_data = process_backrooms_wiki(url, api_key)
+            else:
+                script_data = process_generic_url(url, api_key)
+        except Exception as e:
+            update_status(job_id, f"Error: Could not read or process the URL. Please check if the link is valid and public. Details: {e}", error=True)
+            raise
 
+        update_status(job_id, "Generating script with AI...")
         if not script_data:
+            update_status(job_id, "Error: The AI failed to generate a valid script from the URL content.", error=True)
             raise Exception("The AI failed to generate a valid script.")
         
         scenes_with_assets = []
@@ -303,7 +316,7 @@ def process_job(job_data):
         speaker_map = {}
 
         for i, scene_script in enumerate(script_data):
-            print(f"  - Generating assets for scene {i+1}/{len(script_data)}...")
+            update_status(job_id, f"Generating assets for scene {i+1} of {len(script_data)}...")
             
             speaker_key = scene_script.get('speaker', 'narrator').lower()
             if speaker_key.startswith('commenter'):
@@ -328,10 +341,9 @@ def process_job(job_data):
                 'local_image_path': image_path,
                 'local_audio_path': audio_path
             })
-        print("✅ All assets generated and uploaded.")
         
-        # --- PART 2: VIDEO RENDERING ---
-        print("Downloading background music if available...")
+        update_status(job_id, "All assets generated, preparing for video render...")
+        
         local_bg_music_path = None
         if job_data.get('background_music_url'):
             bg_music_key = urlparse(job_data['background_music_url']).path.lstrip('/')
@@ -339,13 +351,12 @@ def process_job(job_data):
             s3.download_file(AWS_S3_BUCKET_NAME, bg_music_key, local_bg_music_path)
             print("Background music downloaded.")
 
-        print("Building individual scene videos...")
+        update_status(job_id, "Building video clips...")
         intermediate_video_paths = []
         caption_settings = job_data.get('caption_settings', {})
         framerate = 24
 
         for i, scene in enumerate(scenes_with_assets):
-            print(f"Processing scene {i+1}/{len(scenes_with_assets)}...")
             duration = scene.get('duration', 1.0)
             intermediate_path = os.path.join(output_dir, f"scene_{i}.mp4")
             
@@ -365,14 +376,15 @@ def process_job(job_data):
                 '-filter_complex', filter_complex,
                 '-map', f'[v{i}]',
                 '-map', '1:a',
-                '-c:v', 'libx264', '-preset', 'fast', '-pix_fmt', 'yuv4z0p',
+                '-c:v', 'libx264', '-preset', 'fast',
+                '-pix_fmt', 'yuv420p',
                 '-c:a', 'aac', '-t', str(duration),
                 intermediate_path
             ]
             subprocess.run(ffmpeg_scene_cmd, check=True, capture_output=True, text=True)
             intermediate_video_paths.append(intermediate_path)
 
-        print("\nStitching scene videos together...")
+        update_status(job_id, "Stitching video clips together...")
         concat_list_path = os.path.join(output_dir, "concat_list.txt")
         with open(concat_list_path, 'w') as f:
             for path in intermediate_video_paths:
@@ -384,7 +396,7 @@ def process_job(job_data):
 
         final_video_path = os.path.join(output_dir, "final_video.mp4")
         if local_bg_music_path:
-            print("Mixing in background music...")
+            update_status(job_id, "Adding background music...")
             music_volume = int(caption_settings.get('musicVolume', 13)) / 100.0
             mix_filter = f"[1:a]volume={music_volume}[bga];[0:a][bga]amix=inputs=2:duration=first[a]"
             
@@ -401,17 +413,27 @@ def process_job(job_data):
         else:
             os.rename(video_no_music_path, final_video_path)
             
-        print("FFmpeg finished.")
+        update_status(job_id, "Finalizing and uploading video...")
         final_video_key = f"jobs/{job_id}/output/final_video.mp4"
         upload_to_s3(final_video_path, final_video_key)
         print(f"✅ Job {job_id} complete! Final video uploaded.")
 
     except Exception as e:
+        error_message = f"An unexpected error occurred: {e}"
+        try:
+            s3_client_check = boto3.client('s3', aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
+            status_key = f"jobs/{job_id}/status.json"
+            status_obj = s3_client_check.get_object(Bucket=AWS_S3_BUCKET_NAME, Key=status_key)
+            status_data = json.loads(status_obj['Body'].read())
+            if status_data.get('status') != 'failed':
+                update_status(job_id, error_message, error=True)
+        except Exception:
+            update_status(job_id, error_message, error=True)
+
         print(f"❌ ERROR processing job {job_id}: {e}")
         if isinstance(e, subprocess.CalledProcessError):
             print("--- FFMPEG STDERR ---")
             print(e.stderr)
-            print("--- END FFMPEG STDERR ---")
         sys.exit(1)
     finally:
         if os.path.exists(input_dir): shutil.rmtree(input_dir)
@@ -437,4 +459,5 @@ if __name__ == "__main__":
         process_job(job_details)
     except Exception as e:
         print(f"❌ ERROR: Failed to fetch or run job. Error: {e}")
+        update_status(JOB_ID, f"Failed to start job: {e}", error=True)
         sys.exit(1)

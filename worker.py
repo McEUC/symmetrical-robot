@@ -20,6 +20,7 @@ AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
 AWS_S3_BUCKET_NAME = os.environ.get('AWS_S3_BUCKET_NAME')
 JOB_ID = os.environ.get('JOB_ID')
 FFMPEG_PATH = "ffmpeg"
+GCP_PROJECT_ID = os.environ.get('GCP_PROJECT_ID') # Add this line
 
 # --- HELPER FUNCTIONS ---
 def upload_to_s3(file_path, object_name):
@@ -67,7 +68,9 @@ def generate_image(api_key, prompt, output_path):
     current_prompt = prompt
     for attempt in range(max_retries):
         try:
-            vertexai.init()
+            # MODIFIED LINE: Initialize with the project ID
+            vertexai.init(project=GCP_PROJECT_ID)
+            
             model = ImageGenerationModel.from_pretrained("imagegeneration@006")
             images = model.generate_images(prompt=current_prompt, number_of_images=1, aspect_ratio="16:9", negative_prompt="text, letters, words, watermark, signature, logo")
             if images:
@@ -76,6 +79,7 @@ def generate_image(api_key, prompt, output_path):
                 return
             raise Exception("API returned an empty list of images.")
         except Exception as e:
+            # ... (the rest of the function is unchanged) ...
             print(f"Imagen API call failed (attempt {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
                 print("Attempting to rewrite prompt to be safer...")

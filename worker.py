@@ -21,6 +21,16 @@ AWS_S3_BUCKET_NAME = os.environ.get('AWS_S3_BUCKET_NAME')
 JOB_ID = os.environ.get('JOB_ID')
 FFMPEG_PATH = "ffmpeg"
 GCP_PROJECT_ID = os.environ.get('GCP_PROJECT_ID')
+# The public IP of your VM is needed for the worker to call back to the Flask app
+FLASK_APP_URL = f"http://{os.environ.get('FLASK_VM_IP')}:5000"
+
+# List of image generation models to try in sequence
+IMAGE_MODELS_TO_TRY = [
+    "imagegeneration@006",
+    "imagen-3.0-fast-generate-001",
+    "imagen-3.0-generate-002",
+    "imagen-4.0-fast-generate-preview-06-06"
+]
 
 # --- Status Reporting Function ---
 def update_status(job_id, message, error=False):
@@ -79,47 +89,39 @@ def generate_script_from_prompt(api_key, prompt):
                 
     raise Exception("Failed to get valid script from Gemini API after multiple attempts.")
 
-def generate_image(api_key, prompt, output_path, is_short_form=False):
-    """Generates an image using Vertex AI, with a self-healing retry mechanism."""
+def generate_image_with_retries(api_key, prompt, output_path, is_short_form=False):
+    """
+    Generates an image using a list of Vertex AI models, cycling through them on failure.
+    """
     print(f"Generating image for prompt: '{prompt}'")
     aspect_ratio = "9:16" if is_short_form else "16:9"
-    max_retries = 3
-    current_prompt = prompt
-    for attempt in range(max_retries):
+    
+    # Loop through the models twice to give each a second chance
+    models_to_attempt = IMAGE_MODELS_TO_TRY * 2
+
+    for model_name in models_to_attempt:
         try:
+            print(f"Attempting image generation with model: {model_name}")
             vertexai.init(project=GCP_PROJECT_ID)
-            model = ImageGenerationModel.from_pretrained("imagegeneration@006")
-            images = model.generate_images(prompt=current_prompt, number_of_images=1, aspect_ratio=aspect_ratio, negative_prompt="text, letters, words, watermark, signature, logo")
+            model = ImageGenerationModel.from_pretrained(model_name)
+            images = model.generate_images(
+                prompt=prompt,
+                number_of_images=1,
+                aspect_ratio=aspect_ratio,
+                negative_prompt="text, letters, words, watermark, signature, logo"
+            )
             if images:
                 images[0].save(location=output_path, include_generation_parameters=False)
-                print(f"Successfully saved image to {output_path}")
-                return
-            raise Exception("API returned an empty list of images.")
-        except Exception as e:
-            print(f"Imagen API call failed (attempt {attempt + 1}/{max_retries}): {e}")
-            if attempt < max_retries - 1:
-                print("Attempting to rewrite prompt to be safer...")
-                try:
-                    fixer_prompt = f"""The following prompt for an AI image generator was rejected, likely for violating a safety policy: "{current_prompt}"
-Rewrite the prompt to be safer while preserving the original's core artistic and atmospheric intent. Focus on removing potentially sensitive words and describe the scene more abstractly if needed. Do not describe graphic violence, gore, or self-harm.
-Respond ONLY with the new prompt text."""
-                    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={api_key}"
-                    headers = {"Content-Type": "application/json"}
-                    data = {"contents": [{"parts": [{"text": fixer_prompt}]}]}
-                    response = requests.post(endpoint, headers=headers, json=data, timeout=45)
-                    response.raise_for_status()
-                    response_json = response.json()
-                    if response_json.get('candidates'):
-                        new_prompt = response_json['candidates'][0]['content']['parts'][0]['text'].strip()
-                        print(f"Generated new, safer prompt: '{new_prompt}'")
-                        current_prompt = new_prompt
-                except Exception as fixer_e:
-                    print(f"Failed to rewrite the prompt: {fixer_e}")
-                print("Waiting 60 seconds before retrying...")
-                time.sleep(60)
+                print(f"Successfully generated image with {model_name}.")
+                return # Success, exit the function
             else:
-                raise e
-    raise Exception(f"Image generation failed for prompt '{prompt}' after multiple attempts.")
+                print(f"Model {model_name} returned no images.")
+        except Exception as e:
+            print(f"Model {model_name} failed: {e}")
+            # Immediately try the next model
+    
+    # If all attempts fail
+    raise Exception(f"Image generation failed for prompt '{prompt}' after trying all models.")
 
 def generate_audio(api_key, text, voice_name, output_path):
     """Generates audio for a given line of text, handling long text by splitting it."""
@@ -225,9 +227,20 @@ def process_url_content(url):
     print(f"Extracted content: {full_text[:300]}...")
     return full_text
 
+def call_update_code_usage(code):
+    """Calls the Flask app to increment the usage count for a code."""
+    try:
+        update_url = f"{FLASK_APP_URL}/update-code-usage"
+        response = requests.post(update_url, json={"code": code}, timeout=10)
+        response.raise_for_status()
+        print(f"Successfully updated usage for code: {code}")
+    except Exception as e:
+        print(f"WARNING: Failed to update code usage for '{code}'. Error: {e}")
+
 # --- Core Video Processing Function ---
 def process_job(job_data):
     job_id = job_data.get('job_id')
+    print(f"\n🚀 Starting job: {job_id}")
     update_status(job_id, "Worker started, preparing assets...")
 
     input_dir = f"./{job_id}_input"
@@ -240,6 +253,7 @@ def process_job(job_data):
     try:
         api_key = job_data.get('api_key')
         url = job_data.get('url')
+        preview_code = job_data.get('preview_code')
         channel_name = job_data.get('channel_name')
         narrator_style = job_data.get('narrator_style')
         is_short_form = job_data.get('is_short_form', False)
@@ -274,12 +288,16 @@ def process_job(job_data):
                     speaker_map[speaker_key] = f'commenter{len(speaker_map) + 1}'
             mapped_speaker = speaker_map.get(speaker_key, speaker_key)
             voice_name = voice_settings.get(mapped_speaker, voice_settings.get('narrator'))
+            
             image_path = os.path.join(input_dir, f"scene_{i}.png")
             audio_path = os.path.join(input_dir, f"scene_{i}.mp3")
-            generate_image(api_key, scene_script.get('image_prompt'), image_path, is_short_form)
+
+            generate_image_with_retries(api_key, scene_script.get('image_prompt'), image_path, is_short_form)
             duration = generate_audio(api_key, scene_script.get('line'), voice_name, audio_path)
+            
             image_url = upload_to_s3(image_path, f"jobs/{job_id}/input/scene_{i}.png")
             audio_url = upload_to_s3(audio_path, f"jobs/{job_id}/input/scene_{i}.mp3")
+            
             scenes_with_assets.append({
                 'duration': duration, 'image_url': image_url, 'audio_url': audio_url,
                 'local_image_path': image_path, 'local_audio_path': audio_path
@@ -301,21 +319,22 @@ def process_job(job_data):
         for i, scene in enumerate(scenes_with_assets):
             duration = scene.get('duration', 1.0)
             intermediate_path = os.path.join(output_dir, f"scene_{i}.mp4")
-            total_frames = int(duration * framerate)
+            
             fade_duration = 0.5
+            total_frames = int(duration * framerate)
 
             if is_short_form:
-                # Vertical video (9:16)
+                # Vertical video (9:16), crop and pad
                 filter_complex = (
-                    f"[0:v]scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1[vbase];"
-                    f"[vbase]zoompan=z='min(zoom+0.0005,1.5)':d={total_frames}:s=720x1280[vzoomed];"
+                    f"[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1[vbase];"
+                    f"[vbase]zoompan=z='min(zoom+0.0005,1.1)':d={total_frames}:s=720x1280[vzoomed];"
                     f"[vzoomed]fade=in:st=0:d={fade_duration},fade=out:st={duration - fade_duration}:d={fade_duration}[v{i}]"
                 )
             else:
                 # Horizontal video (16:9)
                 filter_complex = (
                     f"[0:v]scale=1280:720,setsar=1[vbase];"
-                    f"[vbase]zoompan=z='min(zoom+0.0005,1.5)':d={total_frames}:s=1280x720[vzoomed];"
+                    f"[vbase]zoompan=z='min(zoom+0.0005,1.1)':d={total_frames}:s=1280x720[vzoomed];"
                     f"[vzoomed]fade=in:st=0:d={fade_duration},fade=out:st={duration - fade_duration}:d={fade_duration}[v{i}]"
                 )
 
@@ -355,6 +374,10 @@ def process_job(job_data):
         update_status(job_id, "Finalizing and uploading video...")
         final_video_key = f"jobs/{job_id}/output/final_video.mp4"
         upload_to_s3(final_video_path, final_video_key)
+
+        if preview_code:
+            call_update_code_usage(preview_code)
+            
         print(f"✅ Job {job_id} complete! Final video uploaded.")
 
     except Exception as e:

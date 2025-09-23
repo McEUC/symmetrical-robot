@@ -151,10 +151,7 @@
             { name: 'en-US-Wavenet-A', gender: 'Male', type: 'WaveNet' },
             { name: 'en-US-Wavenet-C', gender: 'Female', type: 'WaveNet' },
             { name: 'en-US-Wavenet-D', gender: 'Male', type: 'WaveNet' },
-            { name: 'en-US-Wavenet-F', gender: 'Female', type: 'WaveNet' },
-            { name: 'en-GB-Wavenet-F', gender: 'Female', type: 'WaveNet' },
-            { name: 'en-US-Chirp3-HD-Achernar', gender: 'Female', type: 'Chirp' },
-            { name: 'en-US-Chirp3-HD-Enceladus', gender: 'Male', type: 'Chirp' }
+            { name: 'en-US-Wavenet-F', gender: 'Female', type: 'WaveNet' }
         ];
 
         function populateVoiceSelectors() {
@@ -163,7 +160,7 @@
                 return acc;
             }, {});
             
-            const groupOrder = ['Studio', 'Journey', 'WaveNet', 'Chirp'];
+            const groupOrder = ['Studio', 'Journey', 'WaveNet'];
             let optionsHtml = '';
             groupOrder.forEach(groupName => {
                 if (voiceGroups[groupName]) {
@@ -176,14 +173,10 @@
             });
 
             for (const key in DOMElements.voiceSelectors) {
-                const selector = DOMElements.voiceSelectors[key];
-                selector.innerHTML = optionsHtml;
+                DOMElements.voiceSelectors[key].innerHTML = optionsHtml;
             }
-            // Set default voices
             DOMElements.voiceSelectors.narrator.value = 'en-US-Studio-Q';
             DOMElements.voiceSelectors.commenter1.value = 'en-US-Journey-D';
-            DOMElements.voiceSelectors.commenter2.value = 'en-US-Chirp3-HD-Achernar';
-            DOMElements.voiceSelectors.commenter3.value = 'en-US-Chirp3-HD-Enceladus';
         }
 
         const logStatus = (message) => {
@@ -198,6 +191,75 @@
             DOMElements.progressBar.textContent = text || `${percentage}%`;
         };
 
+        // --- SESSION MANAGEMENT ---
+        // NEW: Function to start polling for a given job ID.
+        function startPolling(jobId) {
+            if (pollInterval) clearInterval(pollInterval); // Clear any existing timers
+
+            // Immediately update UI to show progress
+            DOMElements.generateBtn.disabled = true;
+            DOMElements.generateBtn.textContent = 'Processing...';
+            DOMElements.progressContainer.style.display = 'block';
+            DOMElements.progressBar.style.backgroundColor = '#0079d3';
+
+            pollInterval = setInterval(async () => {
+                try {
+                    const statusResponse = await fetch(`/status/${jobId}`);
+                    const statusResult = await statusResponse.json();
+                    const message = statusResult.message || 'Processing...';
+
+                    if (statusResult.status === 'done') {
+                        clearInterval(pollInterval);
+                        localStorage.removeItem('activeJobId'); // Clear session
+                        updateProgress(100, 'Video Ready!');
+                        logStatus(`Video complete! Download will start now.`);
+                        const a = document.createElement('a');
+                        a.href = statusResult.downloadUrl;
+                        a.download = 'ai_video.mp4';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        DOMElements.generateBtn.disabled = false;
+                        DOMElements.generateBtn.textContent = 'Generate Video';
+                        DOMElements.previewCodeInput.dispatchEvent(new Event('input'));
+                    } else if (statusResult.status === 'failed') {
+                        clearInterval(pollInterval);
+                        localStorage.removeItem('activeJobId'); // Clear session
+                        DOMElements.progressBar.style.backgroundColor = '#dc3545';
+                        updateProgress(100, 'Error!');
+                        logStatus(`<span style="color:red;">Job Failed: ${message}</span>`);
+                        DOMElements.generateBtn.disabled = false;
+                        DOMElements.generateBtn.textContent = 'Generate Video';
+                        DOMElements.previewCodeInput.dispatchEvent(new Event('input'));
+                    } else if (statusResult.status === 'in_progress') {
+                        logStatus(message);
+                        const currentWidth = parseFloat(DOMElements.progressBar.style.width);
+                        if (currentWidth < 95) {
+                            updateProgress(currentWidth + 2, message);
+                        }
+                    } else { // pending
+                        logStatus(message);
+                    }
+                } catch (pollError) {
+                    clearInterval(pollInterval);
+                    localStorage.removeItem('activeJobId'); // Clear session on error
+                    logStatus(`<span style="color:red;">Connection error while checking status.</span>`);
+                    DOMElements.generateBtn.disabled = false;
+                    DOMElements.generateBtn.textContent = 'Generate Video';
+                }
+            }, 5000);
+        }
+
+        // --- SESSION MANAGEMENT ---
+        // NEW: Function to resume a job when the page loads.
+        function resumeActiveJob() {
+            const activeJobId = localStorage.getItem('activeJobId');
+            if (activeJobId) {
+                logStatus(`Resuming monitoring for active job: ${activeJobId}`);
+                startPolling(activeJobId);
+            }
+        }
+
         DOMElements.narratorStyleSelect.addEventListener('change', () => {
             DOMElements.customNarratorStyleGroup.style.display = (DOMElements.narratorStyleSelect.value === 'Custom') ? 'grid' : 'none';
         });
@@ -206,24 +268,10 @@
             const code = DOMElements.previewCodeInput.value.trim();
             const msgEl = DOMElements.codeStatusMsg;
             const generateBtn = DOMElements.generateBtn;
-
-            if (!code) {
-                msgEl.textContent = 'Please enter a code.';
-                msgEl.style.color = 'red';
-                return;
-            }
-
-            msgEl.textContent = 'Validating...';
-            msgEl.style.color = '#555';
-            generateBtn.disabled = true;
-            generateBtn.textContent = 'Validate Code to Generate';
-
+            if (!code) { msgEl.textContent = 'Please enter a code.'; msgEl.style.color = 'red'; return; }
+            msgEl.textContent = 'Validating...'; msgEl.style.color = '#555'; generateBtn.disabled = true;
             try {
-                const response = await fetch('/validate-code', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ code: code })
-                });
+                const response = await fetch('/validate-code', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ code: code }) });
                 const result = await response.json();
                 msgEl.textContent = result.message;
                 if (result.valid) {
@@ -234,8 +282,7 @@
                     msgEl.style.color = 'red';
                 }
             } catch (error) {
-                msgEl.textContent = 'Error validating code. Please try again.';
-                msgEl.style.color = 'red';
+                msgEl.textContent = 'Error validating code.'; msgEl.style.color = 'red';
             }
         });
 
@@ -249,11 +296,7 @@
         DOMElements.generateBtn.addEventListener('click', async () => {
             const url = DOMElements.urlInput.value.trim();
             const previewCode = DOMElements.previewCodeInput.value.trim();
-
-            if (!url || !previewCode) {
-                alert('Please provide a URL and a valid preview code.');
-                return;
-            }
+            if (!url || !previewCode) { alert('Please provide a URL and a valid preview code.'); return; }
             if (pollInterval) clearInterval(pollInterval);
 
             DOMElements.generateBtn.disabled = true;
@@ -269,24 +312,18 @@
             formData.append('previewCode', previewCode);
             formData.append('channelName', DOMElements.channelNameInput.value.trim());
             let narratorStyle = DOMElements.narratorStyleSelect.value;
-            if (narratorStyle === 'Custom') {
-                narratorStyle = DOMElements.customNarratorStyleInput.value.trim();
-            }
+            if (narratorStyle === 'Custom') narratorStyle = DOMElements.customNarratorStyleInput.value.trim();
             formData.append('narratorStyle', narratorStyle);
             formData.append('isShortForm', DOMElements.shortFormToggle.checked);
             
             const voiceSettings = {};
-            for (const key in DOMElements.voiceSelectors) {
-                voiceSettings[key] = DOMElements.voiceSelectors[key].value;
-            }
+            for (const key in DOMElements.voiceSelectors) { voiceSettings[key] = DOMElements.voiceSelectors[key].value; }
             formData.append('voiceSettings', JSON.stringify(voiceSettings));
             
             const captionSettings = { musicVolume: DOMElements.bgMusicVolume.value };
             formData.append('captionSettings', JSON.stringify(captionSettings));
 
-            if (DOMElements.bgMusicInput.files.length > 0) {
-                formData.append('backgroundMusic', DOMElements.bgMusicInput.files[0]);
-            }
+            if (DOMElements.bgMusicInput.files.length > 0) { formData.append('backgroundMusic', DOMElements.bgMusicInput.files[0]); }
             
             try {
                 const response = await fetch('/generate-video', { method: 'POST', body: formData });
@@ -294,52 +331,21 @@
                 if (!response.ok) throw new Error(result.error || 'Failed to submit job.');
                 
                 const { jobId } = result;
-                logStatus(`Job submitted! ID: ${jobId}. Waiting for worker...`);
+                
+                // --- SESSION MANAGEMENT ---
+                // NEW: Save the active job ID to the browser's local storage.
+                localStorage.setItem('activeJobId', jobId);
+
+                logStatus(`Job submitted! ID: ${jobId}. Starting to monitor status...`);
                 updateProgress(25, 'Waiting for Worker...');
                 
-                pollInterval = setInterval(async () => {
-                    try {
-                        const statusResponse = await fetch(`/status/${jobId}`);
-                        const statusResult = await statusResponse.json();
-                        const message = statusResult.message || 'Processing...';
+                // --- SESSION MANAGEMENT ---
+                // MODIFIED: Use the new centralized polling function.
+                startPolling(jobId);
 
-                        if (statusResult.status === 'done') {
-                            clearInterval(pollInterval);
-                            updateProgress(100, 'Video Ready!');
-                            logStatus(`Video complete! Download will start now.`);
-                            const a = document.createElement('a');
-                            a.href = statusResult.downloadUrl;
-                            a.download = 'ai_video.mp4';
-                            document.body.appendChild(a);
-                            a.click();
-                            document.body.removeChild(a);
-                            DOMElements.generateBtn.disabled = false;
-                            DOMElements.generateBtn.textContent = 'Generate Video';
-                            DOMElements.previewCodeInput.dispatchEvent(new Event('input')); // Force re-validation
-                        } else if (statusResult.status === 'failed') {
-                            clearInterval(pollInterval);
-                            DOMElements.progressBar.style.backgroundColor = '#dc3545';
-                            updateProgress(100, 'Error!');
-                            logStatus(`<span style="color:red;">Job Failed: ${message}</span>`);
-                            DOMElements.generateBtn.disabled = false;
-                            DOMElements.generateBtn.textContent = 'Generate Video';
-                            DOMElements.previewCodeInput.dispatchEvent(new Event('input')); // Force re-validation
-                        } else if (statusResult.status === 'in_progress') {
-                            logStatus(message);
-                            const currentWidth = parseFloat(DOMElements.progressBar.style.width);
-                            if (currentWidth < 95) {
-                                updateProgress(currentWidth + 2, message);
-                            }
-                        } else { // pending
-                            logStatus(message);
-                        }
-                    } catch (pollError) {
-                        clearInterval(pollInterval);
-                        throw pollError;
-                    }
-                }, 5000);
             } catch (error) {
                 if (pollInterval) clearInterval(pollInterval);
+                localStorage.removeItem('activeJobId'); // Clear session on failure
                 DOMElements.progressBar.style.backgroundColor = '#dc3545';
                 updateProgress(100, 'Error!');
                 logStatus(`<span style="color:red;">Operation failed: ${error.message}</span>`);
@@ -348,7 +354,12 @@
                 DOMElements.generateBtn.textContent = 'Generate Video';
             }
         });
+
         populateVoiceSelectors();
+        
+        // --- SESSION MANAGEMENT ---
+        // NEW: Check for an active job as soon as the page loads.
+        resumeActiveJob();
     });
     </script>
 </body>

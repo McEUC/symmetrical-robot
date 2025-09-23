@@ -1,0 +1,8 @@
+Flask
+boto3
+requests
+gunicorn
+google-api-python-client
+google-cloud-aiplatform
+vertexai
+beautifulsoup4

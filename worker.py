@@ -260,14 +260,4 @@ if __name__ == "__main__":
     s3.download_file(AWS_S3_BUCKET_NAME, f"jobs/{JOB_ID}/job.json", job_path)
     with open(job_path) as f:
         process_job(json.load(f))
-```
-
-### **Step 3: Clean Up Your `requirements.txt`**
-
-To avoid future confusion, it's a good idea to remove the unnecessary Pexels library from your dependencies file.
-
-1.  On your server, open your `requirements.txt` file for editing:
-    ```bash
-    nano ~/backrooms_generator/requirements.txt
-    
 

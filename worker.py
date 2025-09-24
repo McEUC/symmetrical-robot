@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 from googleapiclient.discovery import build
 import vertexai
 from vertexai.preview.vision_models import ImageGenerationModel
-from pexels_api import API
+from pexels import API # UPDATED: Import the correct library
 
 # --- Configuration ---
 AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
@@ -45,14 +45,14 @@ def get_stock_footage(api_key, query, output_path, is_short_form=False):
     try:
         api = API(api_key)
         orientation = "portrait" if is_short_form else "landscape"
-        # CORRECTED: The pexels-api library uses search_videos() method for videos.
-        api.search_videos(query, page=1, results_per_page=5, orientation=orientation)
-        videos = api.get_entries()
-        if not videos:
+        # CORRECTED: Use the correct library method
+        search_result = api.videos.search(query, page=1, per_page=5, orientation=orientation)
+        
+        if not search_result.entries:
             print(f"No stock footage found for '{query}'.")
             return None
 
-        best_video = videos[0]
+        best_video = search_result.entries[0]
         # Find the best quality video file available that is not excessively large
         best_file = None
         for f in sorted(best_video.video_files, key=lambda x: x.width, reverse=True):

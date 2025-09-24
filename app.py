@@ -74,7 +74,7 @@ def preview_tts():
         if not GOOGLE_API_KEY:
             return jsonify({"error": "Server TTS is not configured."}), 500
 
-        preview_text = "This is a preview of the selected narrator's voice. You can adjust the background music volume to find the perfect balance for your video production."
+        preview_text = "This is a preview of the selected narrator's voice. You can adjust the background music volume to find the perfect balance for your video production. I hope you really enjoy this application, and if you have any advice on what to make better, please send an email to a trillion pieces at gmail dot com! Thank you!"
 
         tts_service = build('texttospeech', 'v1', developerKey=GOOGLE_API_KEY)
         request_body = {

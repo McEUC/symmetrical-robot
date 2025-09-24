@@ -251,7 +251,7 @@
             bgMusicVolume: document.getElementById('bg-music-volume'),
             previewAudioBtn: document.getElementById('preview-audio-btn'),
             pausePreviewBtn: document.getElementById('pause-preview-btn'),
-            voiceSelectors: { // Keep this structure for populateVoiceSelectors
+            voiceSelectors: {
                 narrator: document.getElementById('narrator-voice-select'),
             }
         };
@@ -260,6 +260,10 @@
         let previewTTSAudio = new Audio();
         let previewBgMusicAudio = new Audio();
         
+        // --- CORRECTED AUDIO PREVIEW LOGIC ---
+        previewTTSAudio.loop = true; // Set TTS audio to loop
+        previewBgMusicAudio.loop = false; // Ensure background music does not loop
+
         const AVAILABLE_VOICES = [
             { name: 'en-US-Studio-Q', gender: 'Female', type: 'Studio' }, { name: 'en-US-Studio-M', gender: 'Male', type: 'Studio' },
             { name: 'en-US-Journey-F', gender: 'Female', type: 'Journey' },{ name: 'en-US-Journey-D', gender: 'Male', type: 'Journey' },
@@ -358,7 +362,6 @@
         });
 
         DOMElements.pausePreviewBtn.addEventListener('click', stopPreview);
-        previewTTSAudio.addEventListener('ended', stopPreview);
         
         DOMElements.bgMusicVolume.addEventListener('input', (e) => {
             previewBgMusicAudio.volume = e.target.value / 100;

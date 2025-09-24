@@ -45,31 +45,24 @@ def get_stock_footage(api_key, query, output_path, is_short_form=False):
         headers = {"Authorization": api_key}
         orientation = "portrait" if is_short_form else "landscape"
         params = { "query": query, "per_page": 5, "orientation": orientation }
-        
         api_url = "https://api.pexels.com/videos/search"
         response = requests.get(api_url, headers=headers, params=params, timeout=20)
         response.raise_for_status()
-        
         search_result = response.json()
-        
         if not search_result.get("videos"):
             print(f"No stock footage found for '{query}'.")
             return None
-
         best_video = search_result["videos"][0]
         video_files = best_video.get("video_files", [])
-        
         best_file = None
         for f in sorted(video_files, key=lambda x: x.get('width', 0), reverse=True):
             if f.get('width') and f['width'] <= 1920:
                 best_file = f
                 break
         if not best_file and video_files: best_file = video_files[0]
-
         if not best_file or not best_file.get("link"):
             print("Could not find a suitable video file link.")
             return None
-
         video_response = requests.get(best_file["link"], stream=True)
         video_response.raise_for_status()
         with open(output_path, 'wb') as f:
@@ -100,16 +93,19 @@ def generate_script_from_prompt(api_key, prompt):
     json_text = response.json()['candidates'][0]['content']['parts'][0]['text']
     return json.loads(json_text.strip().replace('```json', '').replace('```', ''))["script"]["scenes"]
 
+# --- CORRECTED FUNCTION ---
 def generate_image_with_retries(api_key, prompt, output_path, is_short_form=False):
     print(f"Generating image for prompt: '{prompt}'")
     aspect_ratio = "9:16" if is_short_form else "16:9"
     for model_name in IMAGE_MODELS_TO_TRY:
         try:
+            print(f"Attempting image generation with model: {model_name}")
             vertexai.init(project=GCP_PROJECT_ID)
             model = ImageGenerationModel.from_pretrained(model_name)
             images = model.generate_images(prompt=prompt, number_of_images=1, aspect_ratio=aspect_ratio, negative_prompt="text, letters, words, watermark, signature, logo")
             if images:
-                images[0].save(location=output_path)
+                # FIXED: Added include_generation_parameters=False to avoid PIL dependency error
+                images[0].save(location=output_path, include_generation_parameters=False)
                 print(f"Successfully generated image with {model_name}.")
                 return
         except Exception as e:

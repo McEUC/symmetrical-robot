@@ -169,7 +169,14 @@
                     <option value="">(Default) Neutral</option>
                     <option value="Newscaster">Newscaster</option>
                     <option value="Funny and Energetic">Funny & Energetic</option>
+                    <option value="Documentary Host">Documentary Host</option>
+                    <option value="Conspiratorial">Conspiratorial</option>
+                    <option value="Custom">Custom...</option>
                 </select>
+            </div>
+            <div class="control-group" id="custom-narrator-style-group" style="display: none;">
+                <label for="custom-narrator-style-input">Custom Style:</label>
+                <input type="text" id="custom-narrator-style-input" placeholder="e.g., 'A cynical history professor'">
             </div>
         </div>
         
@@ -207,6 +214,8 @@
             codeStatusMsg: document.getElementById('code-status-msg'),
             channelNameInput: document.getElementById('channel-name-input'),
             narratorStyleSelect: document.getElementById('narrator-style-select'),
+            customNarratorStyleGroup: document.getElementById('custom-narrator-style-group'),
+            customNarratorStyleInput: document.getElementById('custom-narrator-style-input'),
             shortFormToggle: document.getElementById('short-form-toggle'),
             visualSourceSelect: document.getElementById('visual-source-select'),
             generateBtn: document.getElementById('generate-btn'),
@@ -219,6 +228,7 @@
         };
 
         let pollInterval = null;
+        
         const AVAILABLE_VOICES = [
             { name: 'en-US-Studio-Q', gender: 'Female', type: 'Studio' },
             { name: 'en-US-Studio-M', gender: 'Male', type: 'Studio' },
@@ -257,7 +267,6 @@
             }
             // Set default voices
             DOMElements.voiceSelectors.narrator.value = 'en-US-Chirp3-HD-Achernar';
-            DOMElements.voiceSelectors.commenter1.value = 'en-US-Chirp3-HD-Enceladus';
         }
 
         const logStatus = (message) => {
@@ -337,6 +346,10 @@
             }
         }
 
+        DOMElements.narratorStyleSelect.addEventListener('change', () => {
+            DOMElements.customNarratorStyleGroup.style.display = (DOMElements.narratorStyleSelect.value === 'Custom') ? 'grid' : 'none';
+        });
+
         DOMElements.validateCodeBtn.addEventListener('click', async () => {
             const code = DOMElements.previewCodeInput.value.trim();
             const msgEl = DOMElements.codeStatusMsg;
@@ -390,7 +403,13 @@
             formData.append('url', url);
             formData.append('previewCode', previewCode);
             formData.append('channelName', DOMElements.channelNameInput.value.trim());
-            formData.append('narratorStyle', DOMElements.narratorStyleSelect.value);
+            
+            let narratorStyle = DOMElements.narratorStyleSelect.value;
+            if (narratorStyle === 'Custom') {
+                narratorStyle = DOMElements.customNarratorStyleInput.value.trim();
+            }
+            formData.append('narratorStyle', narratorStyle);
+
             formData.append('isShortForm', DOMElements.shortFormToggle.checked);
             formData.append('visualSource', DOMElements.visualSourceSelect.value);
             
@@ -433,3 +452,4 @@
     </script>
 </body>
 </html>
+

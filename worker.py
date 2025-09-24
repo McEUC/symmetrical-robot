@@ -117,7 +117,7 @@ def generate_audio(api_key, text, voice_name, output_path):
     request_body = {'input': {'text': clean_text}, 'voice': {'languageCode': voice_name[:5], 'name': voice_name}, 'audioConfig': {'audioEncoding': 'MP3'}}
     response = tts_service.text().synthesize(body=request_body).execute()
     with open(output_path, 'wb') as f:
-        out.write(base64.b64decode(response['audioContent']))
+        f.write(base64.b64decode(response['audioContent']))
     result = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', output_path], stdout=subprocess.PIPE, text=True)
     return float(result.stdout.strip())
 

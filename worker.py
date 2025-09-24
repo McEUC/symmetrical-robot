@@ -93,7 +93,6 @@ def generate_script_from_prompt(api_key, prompt):
     json_text = response.json()['candidates'][0]['content']['parts'][0]['text']
     return json.loads(json_text.strip().replace('```json', '').replace('```', ''))["script"]["scenes"]
 
-# --- CORRECTED FUNCTION ---
 def generate_image_with_retries(api_key, prompt, output_path, is_short_form=False):
     print(f"Generating image for prompt: '{prompt}'")
     aspect_ratio = "9:16" if is_short_form else "16:9"
@@ -104,7 +103,6 @@ def generate_image_with_retries(api_key, prompt, output_path, is_short_form=Fals
             model = ImageGenerationModel.from_pretrained(model_name)
             images = model.generate_images(prompt=prompt, number_of_images=1, aspect_ratio=aspect_ratio, negative_prompt="text, letters, words, watermark, signature, logo")
             if images:
-                # FIXED: Added include_generation_parameters=False to avoid PIL dependency error
                 images[0].save(location=output_path, include_generation_parameters=False)
                 print(f"Successfully generated image with {model_name}.")
                 return
@@ -113,10 +111,12 @@ def generate_image_with_retries(api_key, prompt, output_path, is_short_form=Fals
     raise Exception("Image generation failed.")
 
 def generate_audio(api_key, text, voice_name, output_path):
+    # Sanitize text to prevent TTS from reading out cues
+    clean_text = text.strip()
     tts_service = build('texttospeech', 'v1', developerKey=api_key)
-    request_body = {'input': {'text': text}, 'voice': {'languageCode': voice_name[:5], 'name': voice_name}, 'audioConfig': {'audioEncoding': 'MP3'}}
+    request_body = {'input': {'text': clean_text}, 'voice': {'languageCode': voice_name[:5], 'name': voice_name}, 'audioConfig': {'audioEncoding': 'MP3'}}
     response = tts_service.text().synthesize(body=request_body).execute()
-    with open(output_path, 'wb') as out:
+    with open(output_path, 'wb') as f:
         out.write(base64.b64decode(response['audioContent']))
     result = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', output_path], stdout=subprocess.PIPE, text=True)
     return float(result.stdout.strip())
@@ -142,7 +142,7 @@ def generate_dynamic_prompt(content, channel_name, narrator_style, is_short_form
     ACT as a YouTube host with {style}. Create a script from the content below for a video with {scenes} scenes.
     {intro} {outro}
     INPUT: [{content}]
-    TASK: Return a valid JSON object: {{"script": {{"title": "A viral-style title", "scenes": [{{"line": "Spoken line...", "image_prompt": "Detailed visual description for AI. No text.", "video_search_query": "2-3 word search query for stock footage."}}]}}}}
+    TASK: Return a valid JSON object. Do not include any non-dialogue cues like '(pause)' or sound effect descriptions in the 'line' field. The schema is: {{"script": {{"title": "A viral-style title", "scenes": [{{"line": "Spoken line...", "image_prompt": "Detailed visual description for AI. No text.", "video_search_query": "2-3 word search query for stock footage."}}]}}}}
     """
 
 def process_job(job_data):
@@ -183,19 +183,50 @@ def process_job(job_data):
         
         update_status(job_id, "Rendering video clips...")
         clips = []
+        fade_duration = 0.5 # Duration of fade in/out for each clip
+
         for i, asset in enumerate(assets):
             clip_path = os.path.join(output_dir, f"scene_{i}.mp4")
             is_video_asset = asset['visual'].endswith('.mp4')
+            duration = asset['duration']
+            actual_fade_duration = min(fade_duration, duration / 2)
+            
             res_wh = "720x1280" if is_short_form else "1280x720"
             res_colon = "720:1280" if is_short_form else "1280:720"
+            
             cmd = [FFMPEG_PATH, '-y']
-            if is_video_asset: cmd.extend(['-i', asset['visual']])
-            else: cmd.extend(['-loop', '1', '-r', '24', '-i', asset['visual']])
+            
+            if is_video_asset:
+                cmd.extend(['-i', asset['visual']])
+            else: # Image asset
+                cmd.extend(['-loop', '1', '-r', '24', '-i', asset['visual']])
+
             cmd.extend(['-i', asset['audio']])
-            filter_v = f"[0:v]scale={res_colon}:force_original_aspect_ratio=increase,crop={res_colon},setsar=1"
+            
+            # Build the video filter string
+            filter_v_parts = []
+            filter_v_parts.append(f"[0:v]scale={res_colon}:force_original_aspect_ratio=increase,crop={res_colon},setsar=1")
+            
+            # Apply zoompan ONLY to images
             if not is_video_asset:
-                frames = int(asset['duration'] * 24); filter_v += f",zoompan=z='min(zoom+0.0005,1.1)':d={frames}:s={res_wh}"
-            cmd.extend(['-filter_complex', filter_v, '-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'fast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', '-t', str(asset['duration']), clip_path])
+                frames = int(duration * 24)
+                filter_v_parts.append(f"zoompan=z='min(zoom+0.0005,1.1)':d={frames}:s={res_wh}")
+            
+            # Apply fade in/out to ALL visuals
+            filter_v_parts.append(f"fade=in:st=0:d={actual_fade_duration},fade=out:st={duration - actual_fade_duration}:d={actual_fade_duration}")
+
+            filter_complex = ",".join(filter_v_parts)
+            
+            cmd.extend([
+                '-filter_complex', filter_complex,
+                '-map', '0:v', 
+                '-map', '1:a', 
+                '-c:v', 'libx264', '-preset', 'fast', '-pix_fmt', 'yuv420p', 
+                '-c:a', 'aac', 
+                '-t', str(duration), # Trim visual to exact audio duration
+                clip_path
+            ])
+            
             subprocess.run(cmd, check=True, capture_output=True)
             clips.append(clip_path)
 
@@ -215,13 +246,18 @@ def process_job(job_data):
             s3.download_file(AWS_S3_BUCKET_NAME, urlparse(bg_music_url).path.lstrip('/'), local_bg_music_path)
             
             music_volume = int(caption_settings.get('musicVolume', 15)) / 100.0
-            
             mix_filter = f"[1:a]volume={music_volume}[bga];[0:a][bga]amix=inputs=2:duration=first[a]"
             
             ffmpeg_mix_cmd = [
-                FFMPEG_PATH, '-y', '-i', video_no_music_path, '-i', local_bg_music_path,
-                '-filter_complex', mix_filter, '-map', '0:v', '-map', '[a]',
-                '-c:v', 'copy', '-c:a', 'aac', '-shortest', final_video_path
+                FFMPEG_PATH, '-y',
+                '-i', video_no_music_path,
+                '-stream_loop', '-1', # Loop the next input (music) infinitely
+                '-i', local_bg_music_path,
+                '-filter_complex', mix_filter,
+                '-map', '0:v', '-map', '[a]',
+                '-c:v', 'copy', '-c:a', 'aac',
+                '-shortest', # End encoding when the shortest stream (the video) ends
+                final_video_path
             ]
             subprocess.run(ffmpeg_mix_cmd, check=True, capture_output=True)
         else:

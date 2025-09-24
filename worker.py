@@ -92,7 +92,7 @@ def upload_to_s3(file_path, object_name):
     print(f"Uploaded {os.path.basename(file_path)} to S3.")
 
 def generate_script_from_prompt(api_key, prompt):
-    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
+    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={api_key}"
     headers = {"Content-Type": "application/json"}
     data = {"contents": [{"parts": [{"text": prompt}]}]}
     response = requests.post(endpoint, headers=headers, json=data, timeout=90)

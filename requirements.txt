@@ -7,4 +7,4 @@ google-cloud-aiplatform
 vertexai
 beautifulsoup4
 paypalrestsdk
-python-pexels
+

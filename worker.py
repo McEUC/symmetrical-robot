@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 from googleapiclient.discovery import build
 import vertexai
 from vertexai.preview.vision_models import ImageGenerationModel
-from pexels import API # UPDATED: Import the correct library
+# NOTE: The pexels library has been removed to use a direct API call
 
 # --- Configuration ---
 AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
@@ -29,6 +29,7 @@ IMAGE_MODELS_TO_TRY = [
     "imagen-4.0-fast-generate-preview-06-06",
     "imagen-3.0-fast-generate-001",
     "imagen-3.0-generate-002",
+    "imagen-4.0-generate",
     "imagegeneration@006"
 ]
 
@@ -43,26 +44,38 @@ def update_status(job_id, message, error=False):
 def get_stock_footage(api_key, query, output_path, is_short_form=False):
     print(f"Searching for stock footage with query: '{query}'")
     try:
-        api = API(api_key)
+        headers = {"Authorization": api_key}
         orientation = "portrait" if is_short_form else "landscape"
-        # CORRECTED: Use the correct library method
-        search_result = api.videos.search(query, page=1, per_page=5, orientation=orientation)
+        params = { "query": query, "per_page": 5, "orientation": orientation }
         
-        if not search_result.entries:
+        # CORRECTED: Make a direct API call using the requests library
+        api_url = "https://api.pexels.com/videos/search"
+        response = requests.get(api_url, headers=headers, params=params, timeout=20)
+        response.raise_for_status()
+        
+        search_result = response.json()
+        
+        if not search_result.get("videos"):
             print(f"No stock footage found for '{query}'.")
             return None
 
-        best_video = search_result.entries[0]
+        best_video = search_result["videos"][0]
+        video_files = best_video.get("video_files", [])
+        
         # Find the best quality video file available that is not excessively large
         best_file = None
-        for f in sorted(best_video.video_files, key=lambda x: x.width, reverse=True):
-            if f.width <= 1920: # Cap at 1080p to avoid huge files
+        for f in sorted(video_files, key=lambda x: x.get('width', 0), reverse=True):
+            if f.get('width') and f['width'] <= 1920: # Cap at 1080p to avoid huge files
                 best_file = f
                 break
-        if not best_file:
-             best_file = best_video.video_files[0]
+        if not best_file and video_files:
+             best_file = video_files[0]
 
-        video_response = requests.get(best_file.link, stream=True)
+        if not best_file or not best_file.get("link"):
+            print("Could not find a suitable video file link.")
+            return None
+
+        video_response = requests.get(best_file["link"], stream=True)
         video_response.raise_for_status()
         with open(output_path, 'wb') as f:
             for chunk in video_response.iter_content(chunk_size=8192):
@@ -247,4 +260,14 @@ if __name__ == "__main__":
     s3.download_file(AWS_S3_BUCKET_NAME, f"jobs/{JOB_ID}/job.json", job_path)
     with open(job_path) as f:
         process_job(json.load(f))
+```
+
+### **Step 3: Clean Up Your `requirements.txt`**
+
+To avoid future confusion, it's a good idea to remove the unnecessary Pexels library from your dependencies file.
+
+1.  On your server, open your `requirements.txt` file for editing:
+    ```bash
+    nano ~/backrooms_generator/requirements.txt
+    
 

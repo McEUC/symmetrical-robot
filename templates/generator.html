@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Video Generator</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f0f2f5;
+            color: #1c1e21;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        #app-container {
+            background-color: #ffffff;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 900px;
+            text-align: center;
+        }
+        h1 {
+            color: #ff4500;
+            margin-top: 0;
+        }
+        .input-group {
+            margin-bottom: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .api-key-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        @media (min-width: 600px) {
+            .api-key-group {
+                flex-direction: row;
+                align-items: center;
+            }
+        }
+        .api-key-group input {
+            flex-grow: 1;
+        }
+        input, select, button {
+            font-size: 1rem;
+            border-radius: 6px;
+        }
+        input[type="text"], input[type="password"], select, input[type="file"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            box-sizing: border-box;
+        }
+        .settings-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+            text-align: left;
+            padding: 1rem;
+            border: 1px solid #e1e1e1;
+            border-radius: 8px;
+            margin-top: 1rem;
+        }
+        @media (min-width: 768px) {
+            .settings-grid {
+                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            }
+        }
+        .settings-grid h3 {
+            grid-column: 1 / -1;
+            text-align: center;
+            margin-top: 0;
+            color: #333;
+        }
+        .control-group {
+            display: grid;
+            grid-template-columns: 120px 1fr;
+            gap: 10px;
+            align-items: center;
+        }
+        .control-group label {
+            font-weight: 500;
+            text-align: right;
+        }
+        button {
+            background-color: #ff4500;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            margin-top: 10px;
+        }
+        .api-key-group button {
+            margin-top: 0;
+        }
+        button:hover:not(:disabled) {
+            background-color: #e03d00;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #progress-container {
+            width: 100%;
+            background-color: #e0e0e0;
+            border-radius: 4px;
+            margin-top: 1rem;
+            display: none;
+            overflow: hidden;
+        }
+        #progress-bar {
+            width: 0%;
+            height: 20px;
+            background-color: #0079d3;
+            border-radius: 4px;
+            text-align: center;
+            line-height: 20px;
+            color: white;
+            font-weight: bold;
+            transition: width 0.3s ease;
+        }
+        #status-log {
+            font-style: italic;
+            color: #555;
+            margin-top: 1rem;
+            text-align: left;
+            background-color: #f9f9f9;
+            padding: 10px;
+            border-radius: 6px;
+            max-height: 150px;
+            overflow-y: auto;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app-container">
+        <h1>AI Video Generator</h1>
+        <div class="input-group">
+            <input type="text" id="url-input" placeholder="Paste a public URL here...">
+            <div class="api-key-group">
+                <input type="text" id="preview-code-input" placeholder="Enter your Preview Code...">
+                <button id="validate-code-btn">Validate</button>
+            </div>
+            <div id="code-status-msg" style="font-size: 0.9rem; margin-top: 5px; height: 1em;"></div>
+        </div>
+
+        <div class="settings-grid">
+            <h3>Content Settings</h3>
+            <div class="control-group">
+                <label for="channel-name-input">Channel Name:</label>
+                <input type="text" id="channel-name-input" placeholder="(Optional) e.g., 'Web Wonders'">
+            </div>
+            <div class="control-group">
+                <label for="narrator-style-select">Narrator Style:</label>
+                <select id="narrator-style-select">
+                    <option value="">(Default) Neutral</option>
+                    <option value="Newscaster">Newscaster</option>
+                    <option value="Funny and Energetic">Funny & Energetic</option>
+                </select>
+            </div>
+        </div>
+        
+        <div class="settings-grid">
+             <h3>Visual & Audio Settings</h3>
+            <div class="control-group">
+                <label for="visual-source-select">Visuals:</label>
+                <select id="visual-source-select">
+                    <option value="ai_image">AI Generated Images</option>
+                    <option value="stock_video">Free Stock Videos</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="narrator-voice-select">Narrator:</label>
+                <select id="narrator-voice-select"></select>
+            </div>
+             <div class="control-group">
+                <label for="short-form-toggle">Short Form (9:16)</label>
+                <input type="checkbox" id="short-form-toggle" style="justify-self: start;">
+            </div>
+        </div>
+
+        <button id="generate-btn" disabled>Validate Code to Generate</button>
+        <div id="progress-container"><div id="progress-bar">0%</div></div>
+        <div id="status-log"></div>
+        <div style="text-align: center; margin-top: 1rem;"><a href="/">Back to Home</a></div>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const DOMElements = {
+            urlInput: document.getElementById('url-input'),
+            previewCodeInput: document.getElementById('preview-code-input'),
+            validateCodeBtn: document.getElementById('validate-code-btn'),
+            codeStatusMsg: document.getElementById('code-status-msg'),
+            channelNameInput: document.getElementById('channel-name-input'),
+            narratorStyleSelect: document.getElementById('narrator-style-select'),
+            shortFormToggle: document.getElementById('short-form-toggle'),
+            visualSourceSelect: document.getElementById('visual-source-select'),
+            generateBtn: document.getElementById('generate-btn'),
+            progressContainer: document.getElementById('progress-container'),
+            progressBar: document.getElementById('progress-bar'),
+            statusLog: document.getElementById('status-log'),
+            voiceSelectors: {
+                narrator: document.getElementById('narrator-voice-select'),
+            }
+        };
+
+        let pollInterval = null;
+        const AVAILABLE_VOICES = [
+            { name: 'en-US-Studio-Q', gender: 'Female', type: 'Studio' },
+            { name: 'en-US-Studio-M', gender: 'Male', type: 'Studio' },
+            { name: 'en-US-Journey-F', gender: 'Female', type: 'Journey' },
+            { name: 'en-US-Journey-D', gender: 'Male', type: 'Journey' },
+            { name: 'en-US-Wavenet-A', gender: 'Male', type: 'WaveNet' },
+            { name: 'en-US-Wavenet-C', gender: 'Female', type: 'WaveNet' },
+            { name: 'en-US-Wavenet-D', gender: 'Male', type: 'WaveNet' },
+            { name: 'en-US-Wavenet-F', gender: 'Female', type: 'WaveNet' },
+            { name: 'en-GB-Wavenet-F', gender: 'Female', type: 'WaveNet' },
+            { name: 'en-US-Chirp3-HD-Achernar', gender: 'Female', type: 'Chirp' },
+            { name: 'en-US-Chirp3-HD-Enceladus', gender: 'Male', type: 'Chirp' }
+        ];
+
+        function populateVoiceSelectors() {
+            const voiceGroups = AVAILABLE_VOICES.reduce((acc, voice) => {
+                (acc[voice.type] = acc[voice.type] || []).push(voice);
+                return acc;
+            }, {});
+            
+            const groupOrder = ['Studio', 'Journey', 'WaveNet', 'Chirp'];
+            let optionsHtml = '';
+            groupOrder.forEach(groupName => {
+                if (voiceGroups[groupName]) {
+                    optionsHtml += `<optgroup label="${groupName} Voices">`;
+                    optionsHtml += voiceGroups[groupName].map(v => 
+                        `<option value="${v.name}">${v.name.split('-').pop()} (${v.gender})</option>`
+                    ).join('');
+                    optionsHtml += `</optgroup>`;
+                }
+            });
+
+            for (const key in DOMElements.voiceSelectors) {
+                const selector = DOMElements.voiceSelectors[key];
+                selector.innerHTML = optionsHtml;
+            }
+            // Set default voices
+            DOMElements.voiceSelectors.narrator.value = 'en-US-Chirp3-HD-Achernar';
+            DOMElements.voiceSelectors.commenter1.value = 'en-US-Chirp3-HD-Enceladus';
+        }
+
+        const logStatus = (message) => {
+            const p = document.createElement('p');
+            p.innerHTML = `[${new Date().toLocaleTimeString()}] ${message}`;
+            p.style.margin = '2px 0';
+            DOMElements.statusLog.insertBefore(p, DOMElements.statusLog.firstChild);
+        };
+        
+        const updateProgress = (percentage, text) => {
+            DOMElements.progressBar.style.width = `${percentage}%`;
+            DOMElements.progressBar.textContent = text || `${Math.round(percentage)}%`;
+        };
+
+        function startPolling(jobId) {
+            if (pollInterval) clearInterval(pollInterval);
+            DOMElements.generateBtn.disabled = true;
+            DOMElements.generateBtn.textContent = 'Processing...';
+            DOMElements.progressContainer.style.display = 'block';
+            DOMElements.progressBar.style.backgroundColor = '#0079d3';
+            updateProgress(0, 'Starting...');
+
+            pollInterval = setInterval(async () => {
+                try {
+                    const statusResponse = await fetch(`/status/${jobId}`);
+                    if (!statusResponse.ok) {
+                        throw new Error(`Server responded with status ${statusResponse.status}`);
+                    }
+                    const statusResult = await statusResponse.json();
+                    const message = statusResult.message || 'Processing...';
+
+                    if (statusResult.status === 'done') {
+                        clearInterval(pollInterval);
+                        localStorage.removeItem('activeJobId');
+                        updateProgress(100, 'Video Ready!');
+                        logStatus(`Video complete! Download will start now.`);
+                        const a = document.createElement('a');
+                        a.href = statusResult.downloadUrl;
+                        a.download = 'ai_video.mp4';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        DOMElements.generateBtn.disabled = false;
+                        DOMElements.generateBtn.textContent = 'Generate Video';
+                    } else if (statusResult.status === 'failed') {
+                        clearInterval(pollInterval);
+                        localStorage.removeItem('activeJobId');
+                        DOMElements.progressBar.style.backgroundColor = '#dc3545';
+                        updateProgress(100, 'Error!');
+                        logStatus(`<span style="color:red;">Job Failed: ${message}</span>`);
+                        DOMElements.generateBtn.disabled = false;
+                        DOMElements.generateBtn.textContent = 'Generate Video';
+                    } else if (statusResult.status === 'in_progress') {
+                        logStatus(message);
+                        const currentWidth = parseFloat(DOMElements.progressBar.style.width);
+                        if (currentWidth < 95) {
+                            updateProgress(currentWidth + 2, message);
+                        }
+                    } else { // pending
+                        logStatus(message);
+                    }
+                } catch (pollError) {
+                    clearInterval(pollInterval);
+                    localStorage.removeItem('activeJobId');
+                    logStatus(`<span style="color:red;">Connection error while checking status.</span>`);
+                    DOMElements.generateBtn.disabled = false;
+                    DOMElements.generateBtn.textContent = 'Generate Video';
+                }
+            }, 5000);
+        }
+
+        function resumeActiveJob() {
+            const activeJobId = localStorage.getItem('activeJobId');
+            if (activeJobId) {
+                logStatus(`Resuming monitoring for active job: ${activeJobId}`);
+                startPolling(activeJobId);
+            }
+        }
+
+        DOMElements.validateCodeBtn.addEventListener('click', async () => {
+            const code = DOMElements.previewCodeInput.value.trim();
+            const msgEl = DOMElements.codeStatusMsg;
+            const generateBtn = DOMElements.generateBtn;
+            if (!code) {
+                msgEl.textContent = 'Please enter a code.';
+                msgEl.style.color = 'red';
+                return;
+            }
+            msgEl.textContent = 'Validating...';
+            msgEl.style.color = '#555';
+            generateBtn.disabled = true;
+            try {
+                const response = await fetch('/validate-code', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ code: code })
+                });
+                const result = await response.json();
+                msgEl.textContent = result.message;
+                if (result.valid) {
+                    msgEl.style.color = 'green';
+                    generateBtn.disabled = false;
+                    generateBtn.textContent = 'Generate Video';
+                } else {
+                    msgEl.style.color = 'red';
+                }
+            } catch (error) {
+                msgEl.textContent = 'Error validating code.';
+                msgEl.style.color = 'red';
+            }
+        });
+        
+        DOMElements.generateBtn.addEventListener('click', async () => {
+            const url = DOMElements.urlInput.value.trim();
+            const previewCode = DOMElements.previewCodeInput.value.trim();
+            if (!url || !previewCode) {
+                alert('Please provide a URL and a valid preview code.');
+                return;
+            }
+            if (pollInterval) clearInterval(pollInterval);
+
+            DOMElements.generateBtn.disabled = true;
+            DOMElements.generateBtn.textContent = 'Submitting Job...';
+            DOMElements.progressContainer.style.display = 'block';
+            DOMElements.progressBar.style.backgroundColor = '#0079d3';
+            DOMElements.statusLog.innerHTML = '';
+            updateProgress(10, 'Submitting...');
+
+            const formData = new FormData();
+            formData.append('url', url);
+            formData.append('previewCode', previewCode);
+            formData.append('channelName', DOMElements.channelNameInput.value.trim());
+            formData.append('narratorStyle', DOMElements.narratorStyleSelect.value);
+            formData.append('isShortForm', DOMElements.shortFormToggle.checked);
+            formData.append('visualSource', DOMElements.visualSourceSelect.value);
+            
+            const voiceSettings = {};
+            for (const key in DOMElements.voiceSelectors) {
+                voiceSettings[key] = DOMElements.voiceSelectors[key].value;
+            }
+            formData.append('voiceSettings', JSON.stringify(voiceSettings));
+            formData.append('captionSettings', JSON.stringify({}));
+            
+            try {
+                const response = await fetch('/generate-video', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.error || 'Failed to submit job.');
+                }
+                
+                const { jobId } = result;
+                localStorage.setItem('activeJobId', jobId);
+                logStatus(`Job submitted! ID: ${jobId}. Starting to monitor status...`);
+                startPolling(jobId);
+
+            } catch (error) {
+                if (pollInterval) clearInterval(pollInterval);
+                localStorage.removeItem('activeJobId');
+                DOMElements.progressBar.style.backgroundColor = '#dc3545';
+                updateProgress(100, 'Error!');
+                logStatus(`<span style="color:red;">Operation failed: ${error.message}</span>`);
+                DOMElements.generateBtn.disabled = false;
+                DOMElements.generateBtn.textContent = 'Generate Video';
+            }
+        });
+
+        populateVoiceSelectors();
+        resumeActiveJob();
+    });
+    </script>
+</body>
+</html>

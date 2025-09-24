@@ -6,3 +6,5 @@ google-api-python-client
 google-cloud-aiplatform
 vertexai
 beautifulsoup4
+paypalrestsdk
+pexels-api

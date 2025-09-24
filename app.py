@@ -4,7 +4,8 @@ import json
 import requests
 import boto3
 from flask import Flask, request, jsonify, render_template
-import code_manager # Handles all logic for preview codes
+import code_manager
+from botocore.exceptions import ClientError
 
 # --- CONFIGURATION ---
 app = Flask(__name__, static_folder='static', template_folder='templates')
@@ -12,8 +13,7 @@ UPLOAD_FOLDER = '/tmp'
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 # --- SECRETS & CONFIG (from environment) ---
-# The Google API Key is now stored securely on the backend
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY") 
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 GITHUB_USERNAME = os.environ.get("GITHUB_USERNAME")
 GITHUB_REPO_NAME = os.environ.get("GITHUB_REPO_NAME")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
@@ -31,18 +31,39 @@ def upload_to_s3(file_path, object_name):
         raise
 
 # --- FLASK ROUTES ---
+
 @app.route('/')
-def index():
-    return render_template('index.html')
+def landing_page():
+    """Serves the main landing page."""
+    return render_template('landing.html')
+
+@app.route('/generator')
+def generator_page():
+    """Serves the video generator application page."""
+    return render_template('generator.html')
+
+@app.route('/register-code', methods=['POST'])
+def register_code():
+    """Endpoint for the frontend to register a new free email and code."""
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        code = data.get('code')
+        if not email or not code:
+            return jsonify({"success": False, "message": "Email and code are required."}), 400
+        result = code_manager.register_new_code(email, code)
+        return jsonify(result), result.get("status_code", 500)
+    except Exception as e:
+        print(f"Error during code registration: {e}")
+        return jsonify({"success": False, "message": "An internal server error occurred."}), 500
 
 @app.route('/validate-code', methods=['POST'])
 def validate_preview_code():
-    """Endpoint for the frontend to validate a preview code before enabling the generate button."""
+    """Endpoint for the frontend to validate a preview code."""
     data = request.get_json()
     code = data.get('code')
     if not code:
         return jsonify({"valid": False, "message": "Please enter a code."})
-    
     validation_result = code_manager.validate_code(code)
     return jsonify(validation_result)
 
@@ -59,62 +80,50 @@ def update_code_usage_route():
 
 @app.route('/generate-video', methods=['POST'])
 def handle_video_generation():
+    """Handles the main video generation job submission."""
     try:
         form_data = request.form
         preview_code = form_data.get('previewCode')
 
-        # Server-side validation to ensure no one bypasses the frontend check
         if not preview_code:
             return jsonify({"error": "A valid preview code is required."}), 403
-
         validation_result = code_manager.validate_code(preview_code)
         if not validation_result["valid"]:
             return jsonify({"error": validation_result["message"]}), 403
             
-        # The server is the single source of truth for the API key
         if not GOOGLE_API_KEY:
             return jsonify({"error": "Critical Server Error: API key not configured."}), 500
 
         job_id = str(uuid.uuid4())
-        job_folder = os.path.join(app.config['UPLOAD_FOLDER'], job_id)
-        os.makedirs(job_folder, exist_ok=True)
-
+        
         # Build the job data package for the worker
         job_data = {
             "job_id": job_id,
             "url": form_data.get('url'),
-            "api_key": GOOGLE_API_KEY, # API key is securely injected here
+            "api_key": GOOGLE_API_KEY,
             "preview_code": preview_code,
             "channel_name": form_data.get('channelName'),
             "narrator_style": form_data.get('narratorStyle'),
             "is_short_form": form_data.get('isShortForm') == 'true',
+            "visual_source": form_data.get('visualSource'), # Pass visual source to worker
             "voice_settings": json.loads(form_data.get('voiceSettings')),
             "caption_settings": json.loads(form_data.get('captionSettings')),
         }
         
-        bg_music_url = None
-        if 'backgroundMusic' in request.files and request.files['backgroundMusic'].filename != '':
-            music_file = request.files['backgroundMusic']
-            bg_music_path = os.path.join(job_folder, "bg_music.mp3")
-            music_file.save(bg_music_path)
-            music_s3_key = f"jobs/{job_id}/input/bg_music.mp3"
-            upload_to_s3(bg_music_path, music_s3_key)
-            bg_music_url = f"https://{AWS_S3_BUCKET_NAME}.s3.amazonaws.com/{music_s3_key}"
-
-        job_data["background_music_url"] = bg_music_url
-
+        # Save job.json to a temporary local path before uploading
+        job_folder = os.path.join(app.config['UPLOAD_FOLDER'], job_id)
+        os.makedirs(job_folder, exist_ok=True)
         job_file_path = os.path.join(job_folder, 'job.json')
         with open(job_file_path, 'w') as f:
             json.dump(job_data, f)
         upload_to_s3(job_file_path, f"jobs/{job_id}/job.json")
 
-        print(f"Triggering GitHub Action for job: {job_id}")
-        headers = {"Accept": "application/vnd.github.v3+json", "Authorization": f"token {GITHUB_TOKEN}", "X-GitHub-Api-Version": "2022-11-28"}
+        # Trigger GitHub Action
+        headers = {"Accept": "application/vnd.github.v3+json", "Authorization": f"token {GITHUB_TOKEN}"}
         data = {"event_type": "video-job", "client_payload": {"job_id": job_id}}
         dispatch_url = f"https://api.github.com/repos/{GITHUB_USERNAME}/{GITHUB_REPO_NAME}/dispatches"
         api_response = requests.post(dispatch_url, json=data, headers=headers, timeout=10)
         api_response.raise_for_status()
-        print("GitHub Action triggered successfully.")
         
         return jsonify({"message": "Job submitted successfully!", "jobId": job_id})
 
@@ -125,24 +134,23 @@ def handle_video_generation():
 
 @app.route('/status/<job_id>', methods=['GET'])
 def get_status(job_id):
+    """Polls S3 for the status of a video generation job."""
     s3_client = boto3.client('s3', aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
     
-    # Check for the final video first
     try:
         video_object_key = f"jobs/{job_id}/output/final_video.mp4"
         s3_client.head_object(Bucket=AWS_S3_BUCKET_NAME, Key=video_object_key)
         video_url = f"https://{AWS_S3_BUCKET_NAME}.s3.amazonaws.com/{video_object_key}"
         return jsonify({"status": "done", "downloadUrl": video_url})
-    except s3_client.exceptions.ClientError:
-        pass # Video not found, continue to check for status file
+    except ClientError:
+        pass # Video not found, continue to check status file
 
-    # Check for the detailed status file
     try:
         status_object_key = f"jobs/{job_id}/status.json"
         status_obj = s3_client.get_object(Bucket=AWS_S3_BUCKET_NAME, Key=status_object_key)
         status_data = json.loads(status_obj['Body'].read().decode('utf-8'))
         return jsonify(status_data)
-    except s3_client.exceptions.ClientError:
+    except ClientError:
         # No status file yet, so the job is still pending
         return jsonify({"status": "pending", "message": "Job is queued and waiting for the worker..."})
 

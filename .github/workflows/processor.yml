@@ -41,6 +41,7 @@ jobs:
           AWS_S3_BUCKET_NAME: ${{ secrets.AWS_S3_BUCKET_NAME }}
           JOB_ID: ${{ github.event.client_payload.job_id }}
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           FLASK_VM_IP: ${{ secrets.FLASK_VM_IP }} # Add this secret in GitHub
         run: python -u worker.py
 

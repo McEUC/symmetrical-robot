@@ -13,7 +13,6 @@ from bs4 import BeautifulSoup
 from googleapiclient.discovery import build
 import vertexai
 from vertexai.preview.vision_models import ImageGenerationModel
-# NOTE: The pexels library has been removed to use a direct API call
 
 # --- Configuration ---
 AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
@@ -27,10 +26,7 @@ FLASK_APP_URL = f"http://{os.environ.get('FLASK_VM_IP')}:5000"
 
 IMAGE_MODELS_TO_TRY = [
     "imagen-4.0-fast-generate-preview-06-06",
-    "imagen-3.0-fast-generate-001",
-    "imagen-3.0-generate-002",
-    "imagen-4.0-generate",
-    "imagegeneration@006"
+    "imagen-3.0-fast-generate-001", "imagen-3.0-generate-002", "imagen-4.0-generate", "imagegeneration@006"
 ]
 
 # --- Status Reporting Function ---
@@ -40,15 +36,20 @@ def update_status(job_id, message, error=False):
     s3_client.put_object( Bucket=AWS_S3_BUCKET_NAME, Key=f"jobs/{job_id}/status.json", Body=json.dumps(status_data), ContentType='application/json' )
     print(f"Status update: {message}")
 
-# --- Stock Footage Function (FIXED) ---
+# --- Stock Footage Function (FIXED with better error handling) ---
 def get_stock_footage(api_key, query, output_path, is_short_form=False):
     print(f"Searching for stock footage with query: '{query}'")
+    
+    # NEW: Check if the API key exists before making the call
+    if not api_key:
+        print("Error: PEXELS_API_KEY is missing from the environment.")
+        return None
+        
     try:
         headers = {"Authorization": api_key}
         orientation = "portrait" if is_short_form else "landscape"
         params = { "query": query, "per_page": 5, "orientation": orientation }
         
-        # CORRECTED: Make a direct API call using the requests library
         api_url = "https://api.pexels.com/videos/search"
         response = requests.get(api_url, headers=headers, params=params, timeout=20)
         response.raise_for_status()
@@ -62,14 +63,12 @@ def get_stock_footage(api_key, query, output_path, is_short_form=False):
         best_video = search_result["videos"][0]
         video_files = best_video.get("video_files", [])
         
-        # Find the best quality video file available that is not excessively large
         best_file = None
         for f in sorted(video_files, key=lambda x: x.get('width', 0), reverse=True):
-            if f.get('width') and f['width'] <= 1920: # Cap at 1080p to avoid huge files
+            if f.get('width') and f['width'] <= 1920:
                 best_file = f
                 break
-        if not best_file and video_files:
-             best_file = video_files[0]
+        if not best_file and video_files: best_file = video_files[0]
 
         if not best_file or not best_file.get("link"):
             print("Could not find a suitable video file link.")
@@ -82,11 +81,17 @@ def get_stock_footage(api_key, query, output_path, is_short_form=False):
                 f.write(chunk)
         print(f"Successfully downloaded stock footage to {output_path}")
         return output_path
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 401:
+            print("Error: Pexels API key is invalid or unauthorized. Please check your GitHub Actions secrets.")
+        else:
+            print(f"HTTP Error fetching stock footage: {e}")
+        return None
     except Exception as e:
-        print(f"Error fetching stock footage: {e}")
+        print(f"An unexpected error occurred while fetching stock footage: {e}")
         return None
 
-# --- Helper Functions ---
+# --- Helper Functions (No changes below this line) ---
 def upload_to_s3(file_path, object_name):
     s3_client = boto3.client('s3', aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
     s3_client.upload_file(file_path, AWS_S3_BUCKET_NAME, object_name)
@@ -196,7 +201,7 @@ def process_job(job_data):
                 query = scene.get('video_search_query', 'abstract')
                 visual_path = get_stock_footage(PEXELS_API_KEY, query, os.path.join(input_dir, f"scene_{i}.mp4"), is_short_form)
             
-            if not visual_path: # Fallback to AI image if video fails or isn't chosen
+            if not visual_path:
                 visual_path = os.path.join(input_dir, f"scene_{i}.png")
                 generate_image_with_retries(api_key, scene.get('image_prompt'), visual_path, is_short_form)
             
@@ -216,7 +221,7 @@ def process_job(job_data):
             
             if is_video_asset:
                 cmd.extend(['-i', asset['visual']])
-            else: # Is an image
+            else:
                 cmd.extend(['-loop', '1', '-i', asset['visual']])
 
             cmd.extend(['-i', asset['audio']])

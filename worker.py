@@ -45,16 +45,23 @@ def get_stock_footage(api_key, query, output_path, is_short_form=False):
     try:
         api = API(api_key)
         orientation = "portrait" if is_short_form else "landscape"
-        # CORRECTED: The method is search(), not search_videos()
-        api.search(query, page=1, results_per_page=5, type_='videos', orientation=orientation)
+        # CORRECTED: The pexels-api library uses search_videos() method for videos.
+        api.search_videos(query, page=1, results_per_page=5, orientation=orientation)
         videos = api.get_entries()
         if not videos:
             print(f"No stock footage found for '{query}'.")
             return None
 
         best_video = videos[0]
-        best_file = max(best_video.video_files, key=lambda f: f.width)
-        
+        # Find the best quality video file available that is not excessively large
+        best_file = None
+        for f in sorted(best_video.video_files, key=lambda x: x.width, reverse=True):
+            if f.width <= 1920: # Cap at 1080p to avoid huge files
+                best_file = f
+                break
+        if not best_file:
+             best_file = best_video.video_files[0]
+
         video_response = requests.get(best_file.link, stream=True)
         video_response.raise_for_status()
         with open(output_path, 'wb') as f:
@@ -175,7 +182,8 @@ def process_job(job_data):
             if visual_source == 'stock_video':
                 query = scene.get('video_search_query', 'abstract')
                 visual_path = get_stock_footage(PEXELS_API_KEY, query, os.path.join(input_dir, f"scene_{i}.mp4"), is_short_form)
-            if not visual_path:
+            
+            if not visual_path: # Fallback to AI image if video fails or isn't chosen
                 visual_path = os.path.join(input_dir, f"scene_{i}.png")
                 generate_image_with_retries(api_key, scene.get('image_prompt'), visual_path, is_short_form)
             
@@ -187,17 +195,23 @@ def process_job(job_data):
         clips = []
         for i, asset in enumerate(assets):
             clip_path = os.path.join(output_dir, f"scene_{i}.mp4")
-            is_video = asset['visual'].endswith('.mp4')
-            res = "720:1280" if is_short_form else "1280:720"
+            is_video_asset = asset['visual'].endswith('.mp4')
+            res_wh = "720x1280" if is_short_form else "1280x720"
+            res_colon = "720:1280" if is_short_form else "1280:720"
             
             cmd = [FFMPEG_PATH, '-y']
-            if not is_video: cmd.extend(['-loop', '1'])
-            cmd.extend(['-i', asset['visual'], '-i', asset['audio']])
             
-            filter_v = f"scale={res}:force_original_aspect_ratio=increase,crop={res},setsar=1"
-            if not is_video:
+            if is_video_asset:
+                cmd.extend(['-i', asset['visual']])
+            else: # Is an image
+                cmd.extend(['-loop', '1', '-i', asset['visual']])
+
+            cmd.extend(['-i', asset['audio']])
+            
+            filter_v = f"[0:v]scale={res_colon}:force_original_aspect_ratio=increase,crop={res_colon},setsar=1"
+            if not is_video_asset:
                 frames = int(asset['duration'] * 24)
-                filter_v += f",zoompan=z='min(zoom+0.0005,1.1)':d={frames}:s={res.replace(':', 'x')}"
+                filter_v += f",zoompan=z='min(zoom+0.0005,1.1)':d={frames}:s={res_wh}"
             
             cmd.extend(['-filter_complex', filter_v, '-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'fast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', '-t', str(asset['duration']), clip_path])
             
@@ -233,3 +247,4 @@ if __name__ == "__main__":
     s3.download_file(AWS_S3_BUCKET_NAME, f"jobs/{JOB_ID}/job.json", job_path)
     with open(job_path) as f:
         process_job(json.load(f))
+

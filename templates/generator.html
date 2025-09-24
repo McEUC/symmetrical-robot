@@ -101,7 +101,7 @@
             transition: background-color 0.2s;
             margin-top: 10px;
         }
-        .api-key-group button {
+        .api-key-group button, .audio-preview-controls button {
             margin-top: 0;
         }
         button:hover:not(:disabled) {
@@ -142,6 +142,11 @@
             overflow-y: auto;
             font-size: 0.9em;
         }
+        .audio-preview-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
     </style>
 </head>
 <body>
@@ -181,7 +186,7 @@
         </div>
         
         <div class="settings-grid">
-             <h3>Visual & Audio Settings</h3>
+             <h3>Visual Settings</h3>
             <div class="control-group">
                 <label for="visual-source-select">Visuals:</label>
                 <select id="visual-source-select">
@@ -189,13 +194,32 @@
                     <option value="stock_video">Free Stock Videos</option>
                 </select>
             </div>
-            <div class="control-group">
-                <label for="narrator-voice-select">Narrator:</label>
-                <select id="narrator-voice-select"></select>
-            </div>
              <div class="control-group">
                 <label for="short-form-toggle">Short Form (9:16)</label>
                 <input type="checkbox" id="short-form-toggle" style="justify-self: start;">
+            </div>
+        </div>
+
+        <div class="settings-grid">
+            <h3>Audio Settings</h3>
+            <div class="control-group">
+                <label for="narrator-voice-select">Narrator Voice:</label>
+                <select id="narrator-voice-select"></select>
+            </div>
+            <div class="control-group">
+                <label for="bg-music-input">Background Music:</label>
+                <input type="file" id="bg-music-input" accept="audio/mpeg, audio/wav, audio/ogg">
+            </div>
+            <div class="control-group">
+                <label for="bg-music-volume">Music Volume:</label>
+                <input type="range" id="bg-music-volume" min="0" max="100" value="15">
+            </div>
+             <div class="control-group">
+                <label>Audio Preview:</label>
+                <div class="audio-preview-controls">
+                    <button id="preview-audio-btn">Preview</button>
+                    <button id="pause-preview-btn" style="display: none;">Pause</button>
+                </div>
             </div>
         </div>
 
@@ -222,24 +246,26 @@
             progressContainer: document.getElementById('progress-container'),
             progressBar: document.getElementById('progress-bar'),
             statusLog: document.getElementById('status-log'),
-            voiceSelectors: {
+            narratorVoiceSelect: document.getElementById('narrator-voice-select'),
+            bgMusicInput: document.getElementById('bg-music-input'),
+            bgMusicVolume: document.getElementById('bg-music-volume'),
+            previewAudioBtn: document.getElementById('preview-audio-btn'),
+            pausePreviewBtn: document.getElementById('pause-preview-btn'),
+            voiceSelectors: { // Keep this structure for populateVoiceSelectors
                 narrator: document.getElementById('narrator-voice-select'),
             }
         };
 
         let pollInterval = null;
+        let previewTTSAudio = new Audio();
+        let previewBgMusicAudio = new Audio();
         
         const AVAILABLE_VOICES = [
-            { name: 'en-US-Studio-Q', gender: 'Female', type: 'Studio' },
-            { name: 'en-US-Studio-M', gender: 'Male', type: 'Studio' },
-            { name: 'en-US-Journey-F', gender: 'Female', type: 'Journey' },
-            { name: 'en-US-Journey-D', gender: 'Male', type: 'Journey' },
-            { name: 'en-US-Wavenet-A', gender: 'Male', type: 'WaveNet' },
-            { name: 'en-US-Wavenet-C', gender: 'Female', type: 'WaveNet' },
-            { name: 'en-US-Wavenet-D', gender: 'Male', type: 'WaveNet' },
-            { name: 'en-US-Wavenet-F', gender: 'Female', type: 'WaveNet' },
-            { name: 'en-GB-Wavenet-F', gender: 'Female', type: 'WaveNet' },
-            { name: 'en-US-Chirp3-HD-Achernar', gender: 'Female', type: 'Chirp' },
+            { name: 'en-US-Studio-Q', gender: 'Female', type: 'Studio' }, { name: 'en-US-Studio-M', gender: 'Male', type: 'Studio' },
+            { name: 'en-US-Journey-F', gender: 'Female', type: 'Journey' },{ name: 'en-US-Journey-D', gender: 'Male', type: 'Journey' },
+            { name: 'en-US-Wavenet-A', gender: 'Male', type: 'WaveNet' }, { name: 'en-US-Wavenet-C', gender: 'Female', type: 'WaveNet' },
+            { name: 'en-US-Wavenet-D', gender: 'Male', type: 'WaveNet' }, { name: 'en-US-Wavenet-F', gender: 'Female', type: 'WaveNet' },
+            { name: 'en-GB-Wavenet-F', gender: 'Female', type: 'WaveNet' }, { name: 'en-US-Chirp3-HD-Achernar', gender: 'Female', type: 'Chirp' },
             { name: 'en-US-Chirp3-HD-Enceladus', gender: 'Male', type: 'Chirp' }
         ];
 
@@ -248,25 +274,17 @@
                 (acc[voice.type] = acc[voice.type] || []).push(voice);
                 return acc;
             }, {});
-            
-            const groupOrder = ['Studio', 'Journey', 'WaveNet', 'Chirp'];
+            const groupOrder = ['Studio', 'Journey', 'Chirp', 'WaveNet'];
             let optionsHtml = '';
             groupOrder.forEach(groupName => {
                 if (voiceGroups[groupName]) {
                     optionsHtml += `<optgroup label="${groupName} Voices">`;
-                    optionsHtml += voiceGroups[groupName].map(v => 
-                        `<option value="${v.name}">${v.name.split('-').pop()} (${v.gender})</option>`
-                    ).join('');
+                    optionsHtml += voiceGroups[groupName].map(v => `<option value="${v.name}">${v.name.split('-').pop()} (${v.gender})</option>`).join('');
                     optionsHtml += `</optgroup>`;
                 }
             });
-
-            for (const key in DOMElements.voiceSelectors) {
-                const selector = DOMElements.voiceSelectors[key];
-                selector.innerHTML = optionsHtml;
-            }
-            // Set default voices
-            DOMElements.voiceSelectors.narrator.value = 'en-US-Chirp3-HD-Achernar';
+            DOMElements.narratorVoiceSelect.innerHTML = optionsHtml;
+            DOMElements.narratorVoiceSelect.value = 'en-US-Chirp3-HD-Achernar';
         }
 
         const logStatus = (message) => {
@@ -281,6 +299,71 @@
             DOMElements.progressBar.textContent = text || `${Math.round(percentage)}%`;
         };
 
+        const stopPreview = () => {
+            previewTTSAudio.pause();
+            previewBgMusicAudio.pause();
+            previewTTSAudio.currentTime = 0;
+            previewBgMusicAudio.currentTime = 0;
+            DOMElements.previewAudioBtn.style.display = 'inline-block';
+            DOMElements.pausePreviewBtn.style.display = 'none';
+        };
+
+        DOMElements.previewAudioBtn.addEventListener('click', async () => {
+            const btn = DOMElements.previewAudioBtn;
+            btn.disabled = true;
+            btn.textContent = 'Loading...';
+
+            try {
+                const ttsResponse = await fetch('/preview-tts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ voice: DOMElements.narratorVoiceSelect.value })
+                });
+                if (!ttsResponse.ok) throw new Error('Failed to load TTS preview.');
+                const ttsBlob = await ttsResponse.blob();
+                previewTTSAudio.src = URL.createObjectURL(ttsBlob);
+                previewTTSAudio.load();
+
+                if (DOMElements.bgMusicInput.files.length > 0) {
+                    previewBgMusicAudio.src = URL.createObjectURL(DOMElements.bgMusicInput.files[0]);
+                    previewBgMusicAudio.load();
+                    previewBgMusicAudio.volume = DOMElements.bgMusicVolume.value / 100;
+                } else {
+                    previewBgMusicAudio.src = '';
+                }
+                
+                let ttsReady = false;
+                let bgmReady = !previewBgMusicAudio.src;
+
+                const playWhenReady = () => {
+                    if (ttsReady && bgmReady) {
+                        previewTTSAudio.play();
+                        if (previewBgMusicAudio.src) previewBgMusicAudio.play();
+                        DOMElements.previewAudioBtn.style.display = 'none';
+                        DOMElements.pausePreviewBtn.style.display = 'inline-block';
+                    }
+                };
+                
+                previewTTSAudio.oncanplaythrough = () => { ttsReady = true; playWhenReady(); };
+                if (previewBgMusicAudio.src) {
+                    previewBgMusicAudio.oncanplaythrough = () => { bgmReady = true; playWhenReady(); };
+                }
+
+            } catch (error) {
+                logStatus(`<span style="color:red;">Preview failed: ${error.message}</span>`);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Preview';
+            }
+        });
+
+        DOMElements.pausePreviewBtn.addEventListener('click', stopPreview);
+        previewTTSAudio.addEventListener('ended', stopPreview);
+        
+        DOMElements.bgMusicVolume.addEventListener('input', (e) => {
+            previewBgMusicAudio.volume = e.target.value / 100;
+        });
+
         function startPolling(jobId) {
             if (pollInterval) clearInterval(pollInterval);
             DOMElements.generateBtn.disabled = true;
@@ -292,9 +375,7 @@
             pollInterval = setInterval(async () => {
                 try {
                     const statusResponse = await fetch(`/status/${jobId}`);
-                    if (!statusResponse.ok) {
-                        throw new Error(`Server responded with status ${statusResponse.status}`);
-                    }
+                    if (!statusResponse.ok) throw new Error(`Server responded with status ${statusResponse.status}`);
                     const statusResult = await statusResponse.json();
                     const message = statusResult.message || 'Processing...';
 
@@ -322,12 +403,8 @@
                     } else if (statusResult.status === 'in_progress') {
                         logStatus(message);
                         const currentWidth = parseFloat(DOMElements.progressBar.style.width);
-                        if (currentWidth < 95) {
-                            updateProgress(currentWidth + 2, message);
-                        }
-                    } else { // pending
-                        logStatus(message);
-                    }
+                        if (currentWidth < 95) updateProgress(currentWidth + 2, message);
+                    } else { logStatus(message); }
                 } catch (pollError) {
                     clearInterval(pollInterval);
                     localStorage.removeItem('activeJobId');
@@ -354,20 +431,10 @@
             const code = DOMElements.previewCodeInput.value.trim();
             const msgEl = DOMElements.codeStatusMsg;
             const generateBtn = DOMElements.generateBtn;
-            if (!code) {
-                msgEl.textContent = 'Please enter a code.';
-                msgEl.style.color = 'red';
-                return;
-            }
-            msgEl.textContent = 'Validating...';
-            msgEl.style.color = '#555';
-            generateBtn.disabled = true;
+            if (!code) { msgEl.textContent = 'Please enter a code.'; msgEl.style.color = 'red'; return; }
+            msgEl.textContent = 'Validating...'; msgEl.style.color = '#555'; generateBtn.disabled = true;
             try {
-                const response = await fetch('/validate-code', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ code: code })
-                });
+                const response = await fetch('/validate-code', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ code: code }) });
                 const result = await response.json();
                 msgEl.textContent = result.message;
                 if (result.valid) {
@@ -378,12 +445,12 @@
                     msgEl.style.color = 'red';
                 }
             } catch (error) {
-                msgEl.textContent = 'Error validating code.';
-                msgEl.style.color = 'red';
+                msgEl.textContent = 'Error validating code.'; msgEl.style.color = 'red';
             }
         });
         
         DOMElements.generateBtn.addEventListener('click', async () => {
+            stopPreview();
             const url = DOMElements.urlInput.value.trim();
             const previewCode = DOMElements.previewCodeInput.value.trim();
             if (!url || !previewCode) {
@@ -413,12 +480,15 @@
             formData.append('isShortForm', DOMElements.shortFormToggle.checked);
             formData.append('visualSource', DOMElements.visualSourceSelect.value);
             
-            const voiceSettings = {};
-            for (const key in DOMElements.voiceSelectors) {
-                voiceSettings[key] = DOMElements.voiceSelectors[key].value;
-            }
+            const voiceSettings = { narrator: DOMElements.narratorVoiceSelect.value };
             formData.append('voiceSettings', JSON.stringify(voiceSettings));
-            formData.append('captionSettings', JSON.stringify({}));
+            
+            const captionSettings = { musicVolume: DOMElements.bgMusicVolume.value };
+            formData.append('captionSettings', JSON.stringify(captionSettings));
+            
+            if (DOMElements.bgMusicInput.files.length > 0) {
+                formData.append('backgroundMusic', DOMElements.bgMusicInput.files[0]);
+            }
             
             try {
                 const response = await fetch('/generate-video', {

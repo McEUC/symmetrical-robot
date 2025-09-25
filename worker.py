@@ -26,7 +26,7 @@ FLASK_APP_URL = f"http://{os.environ.get('FLASK_VM_IP')}:5000"
 
 IMAGE_MODELS_TO_TRY = [
     "imagen-4.0-fast-generate-preview-06-06",
-    "imagen-3.0-fast-generate-001", "imagen-3.0-generate-002", "imagegeneration@006"
+    "imagen-3.0-fast-generate-001", "imagen-3.0-generate-002", "imagen-3.0-generate-001", "imagen-4.0-generate-001", "imagegeneration@006"
 ]
 
 # --- Status Reporting & Helper Functions ---
@@ -148,7 +148,20 @@ def generate_dynamic_prompt(content, channel_name, narrator_style, is_short_form
 def process_job(job_data):
     job_id = job_data.get('job_id')
     print(f"\n🚀 Starting job: {job_id}")
-    update_status(job_id, "Worker started...")
+    
+    # --- Progress Percentage Allocation ---
+    # This defines how much of the progress bar each step is worth.
+    SCRIPT_PCT = 10
+    ASSET_START_PCT = 10
+    ASSET_RANGE_PCT = 50 # Assets take up 50% of the bar (from 10% to 60%)
+    RENDER_START_PCT = 60
+    RENDER_RANGE_PCT = 25 # Rendering takes 25% (from 60% to 85%)
+    STITCH_PCT = 90
+    MIX_PCT = 95
+    UPLOAD_PCT = 98
+
+    update_status(job_id, "Worker started... (1% complete)")
+    
     input_dir, output_dir = f"./{job_id}_input", f"./{job_id}_output"
     os.makedirs(input_dir, exist_ok=True); os.makedirs(output_dir, exist_ok=True)
     
@@ -158,16 +171,21 @@ def process_job(job_data):
         api_key, pexels_api_key, url, preview_code, channel_name, narrator_style, is_short_form, visual_source, voice_settings, caption_settings, bg_music_url = (
             job_data.get(k) for k in ['api_key', 'pexels_api_key', 'url', 'preview_code', 'channel_name', 'narrator_style', 'is_short_form', 'visual_source', 'voice_settings', 'caption_settings', 'background_music_url'])
         
-        update_status(job_id, "Scraping URL...")
+        update_status(job_id, "Scraping URL... (2% complete)")
         content = process_url_content(url)
-        update_status(job_id, "Generating script...")
+        
+        update_status(job_id, f"Generating script... ({SCRIPT_PCT}% complete)")
         prompt = generate_dynamic_prompt(content, channel_name, narrator_style, is_short_form)
         script = generate_script_from_prompt(api_key, prompt)
         if not script: raise Exception("Failed to generate script.")
         
         assets = []
+        total_scenes = len(script)
         for i, scene in enumerate(script):
-            update_status(job_id, f"Generating assets for scene {i+1}/{len(script)}...")
+            # Calculate progress within the asset generation phase
+            progress = ASSET_START_PCT + int(((i + 1) / total_scenes) * ASSET_RANGE_PCT)
+            update_status(job_id, f"Generating assets for scene {i+1}/{total_scenes}... ({progress}% complete)")
+            
             visual_path = None
             if visual_source == 'stock_video':
                 query = scene.get('video_search_query', 'abstract')
@@ -181,11 +199,15 @@ def process_job(job_data):
             duration = generate_audio(api_key, scene.get('line'), voice_settings.get('narrator'), audio_path)
             assets.append({'duration': duration, 'visual': visual_path, 'audio': audio_path})
         
-        update_status(job_id, "Rendering video clips...")
         clips = []
+        total_assets = len(assets)
         fade_duration = 0.5 # Duration of fade in/out for each clip
 
         for i, asset in enumerate(assets):
+            # Calculate progress within the rendering phase
+            progress = RENDER_START_PCT + int(((i + 1) / total_assets) * RENDER_RANGE_PCT)
+            update_status(job_id, f"Rendering video clip {i+1}/{total_assets}... ({progress}% complete)")
+
             clip_path = os.path.join(output_dir, f"scene_{i}.mp4")
             is_video_asset = asset['visual'].endswith('.mp4')
             duration = asset['duration']
@@ -203,16 +225,13 @@ def process_job(job_data):
 
             cmd.extend(['-i', asset['audio']])
             
-            # Build the video filter string
             filter_v_parts = []
             filter_v_parts.append(f"[0:v]scale={res_colon}:force_original_aspect_ratio=increase,crop={res_colon},setsar=1")
             
-            # Apply zoompan ONLY to images
             if not is_video_asset:
                 frames = int(duration * 24)
                 filter_v_parts.append(f"zoompan=z='min(zoom+0.0005,1.1)':d={frames}:s={res_wh}")
             
-            # Apply fade in/out to ALL visuals
             filter_v_parts.append(f"fade=in:st=0:d={actual_fade_duration},fade=out:st={duration - actual_fade_duration}:d={actual_fade_duration}")
 
             filter_complex = ",".join(filter_v_parts)
@@ -223,14 +242,14 @@ def process_job(job_data):
                 '-map', '1:a', 
                 '-c:v', 'libx264', '-preset', 'fast', '-pix_fmt', 'yuv420p', 
                 '-c:a', 'aac', 
-                '-t', str(duration), # Trim visual to exact audio duration
+                '-t', str(duration),
                 clip_path
             ])
             
             subprocess.run(cmd, check=True, capture_output=True)
             clips.append(clip_path)
 
-        update_status(job_id, "Stitching video clips together...")
+        update_status(job_id, f"Stitching video clips together... ({STITCH_PCT}% complete)")
         concat_list = os.path.join(output_dir, "concat.txt")
         with open(concat_list, 'w') as f:
             for c in clips: f.write(f"file '{os.path.basename(c)}'\n")
@@ -241,7 +260,7 @@ def process_job(job_data):
         final_video_path = os.path.join(output_dir, "final_video.mp4")
 
         if bg_music_url:
-            update_status(job_id, "Downloading and mixing background music...")
+            update_status(job_id, f"Mixing background music... ({MIX_PCT}% complete)")
             local_bg_music_path = os.path.join(input_dir, os.path.basename(urlparse(bg_music_url).path))
             s3.download_file(AWS_S3_BUCKET_NAME, urlparse(bg_music_url).path.lstrip('/'), local_bg_music_path)
             
@@ -251,19 +270,19 @@ def process_job(job_data):
             ffmpeg_mix_cmd = [
                 FFMPEG_PATH, '-y',
                 '-i', video_no_music_path,
-                '-stream_loop', '-1', # Loop the next input (music) infinitely
+                '-stream_loop', '-1',
                 '-i', local_bg_music_path,
                 '-filter_complex', mix_filter,
                 '-map', '0:v', '-map', '[a]',
                 '-c:v', 'copy', '-c:a', 'aac',
-                '-shortest', # End encoding when the shortest stream (the video) ends
+                '-shortest',
                 final_video_path
             ]
             subprocess.run(ffmpeg_mix_cmd, check=True, capture_output=True)
         else:
             os.rename(video_no_music_path, final_video_path)
             
-        update_status(job_id, "Finalizing and uploading video...")
+        update_status(job_id, f"Finalizing and uploading... ({UPLOAD_PCT}% complete)")
         upload_to_s3(final_video_path, f"jobs/{job_id}/output/final_video.mp4")
         if preview_code: call_update_code_usage(preview_code)
         print(f"✅ Job {job_id} complete!")
@@ -285,4 +304,3 @@ if __name__ == "__main__":
     s3_main.download_file(AWS_S3_BUCKET_NAME, f"jobs/{JOB_ID}/job.json", job_path)
     with open(job_path) as f:
         process_job(json.load(f))
-

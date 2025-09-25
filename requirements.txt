@@ -8,3 +8,4 @@ vertexai
 beautifulsoup4
 paypalrestsdk
 Pillow
+python-dateutil

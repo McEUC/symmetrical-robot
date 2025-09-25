@@ -1,135 +1,155 @@
 import boto3
-import json
-from datetime import datetime
 from botocore.exceptions import ClientError
+from datetime import datetime, timezone
+from dateutil.relativedelta import relativedelta
 import os
 
-# --- CONFIGURATION ---
-S3_BUCKET_NAME = os.environ.get("AWS_S3_BUCKET_NAME", "default-bucket")
-CODES_FILE_KEY = "codes.json"
-ADMIN_EMAIL = "evans.malcolmc@gmail.com" # Your special admin email
+# --- Configuration ---
+# Use environment variables for table name for better flexibility
+DYNAMODB_TABLE_NAME = os.environ.get("DYNAMODB_TABLE_NAME", "VideoGeneratorCodes")
+dynamodb_table = None
 
-s3_client = boto3.client('s3', 
-    aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"), 
-    aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY")
-)
-
-def get_codes_from_s3():
-    """Fetches the codes.json file from S3."""
-    try:
-        response = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=CODES_FILE_KEY)
-        return json.loads(response['Body'].read().decode('utf-8'))
-    except ClientError as e:
-        if e.response['Error']['Code'] == 'NoSuchKey':
-            return {"codes": {}, "emails": {}}
-        raise
-
-def save_codes_to_s3(data):
-    """Saves the provided data object to codes.json in S3."""
-    s3_client.put_object(
-        Bucket=S3_BUCKET_NAME,
-        Key=CODES_FILE_KEY,
-        Body=json.dumps(data, indent=2),
-        ContentType='application/json'
+def init_aws_credentials(access_key, secret_key, region='us-east-1'):
+    """Initializes the module with AWS credentials and the DynamoDB table resource."""
+    global dynamodb_table
+    
+    session = boto3.Session(
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        region_name=region
     )
+    dynamodb = session.resource('dynamodb')
+    dynamodb_table = dynamodb.Table(DYNAMODB_TABLE_NAME)
 
-def register_new_code(email, code):
-    """Handles logic for registering a new FREE code."""
-    data = get_codes_from_s3()
-    
-    if email in data.get("emails", {}):
-        return {"success": False, "message": "This email has already been registered.", "status_code": 409}
-
-    is_admin = (email == ADMIN_EMAIL)
-    
-    new_code_entry = {
-        "type": "unlimited" if is_admin else "one_time",
-        "max_uses": float('inf') if is_admin else 3,
-        "used_count": 0,
-        "created_at": datetime.utcnow().isoformat(),
+def register_new_code(email, code, tier="one_time"):
+    """Adds a new code to DynamoDB based on the specified tier."""
+    # This function would be called after a successful payment for paid tiers
+    item = {
+        "code": code,
         "email": email,
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "last_used": None
     }
+
+    if tier == "unlimited":
+        item.update({"type": "unlimited"})
+    elif tier == "monthly":
+        item.update({
+            "type": "monthly",
+            "max_uses": 30, # Or 60, depending on the specific plan
+            "used_count": 0,
+            "usage_period_start": datetime.now(timezone.utc).isoformat()
+        })
+    else: # Default to the free "one_time" code
+        item.update({
+            "type": "one_time",
+            "max_uses": 3,
+            "used_count": 0,
+        })
     
-    data["codes"][code] = new_code_entry
-    data.setdefault("emails", {})[email] = code
-    
-    save_codes_to_s3(data)
-    return {"success": True, "message": "Code registered successfully.", "status_code": 201}
-
-def create_paid_code(email, plan_type, paypal_subscription_id):
-    """Handles logic for creating a new PAID monthly code."""
-    data = get_codes_from_s3()
-
-    if email in data.get("emails", {}):
-        return {"success": False, "message": "This email is already associated with a code."}
-
-    max_uses = 30 if plan_type == 'creator' else 60
-    prefix = "MONTH30" if plan_type == 'creator' else "MONTH60"
-    unique_id = (datetime.now().strftime('%Y%m%d%H%M%S') + os.urandom(4).hex()).upper()
-    new_code = f"{prefix}-{unique_id}"
-
-    new_code_entry = {
-        "type": "monthly",
-        "max_uses": max_uses,
-        "used_count": 0,
-        "created_at": datetime.utcnow().isoformat(),
-        "email": email,
-        "last_used": None,
-        "paypal_subscription_id": paypal_subscription_id,
-        "current_month": datetime.utcnow().strftime('%Y-%m')
-    }
-
-    data["codes"][new_code] = new_code_entry
-    data.setdefault("emails", {})[email] = new_code # <-- Bug Fix: Was using 'code' which is not defined here.
-    save_codes_to_s3(data)
-    
-    return {"success": True, "code": new_code}
-
+    try:
+        dynamodb_table.put_item(
+            Item=item,
+            ConditionExpression='attribute_not_exists(code)'
+        )
+        print(f"Successfully registered '{tier}' code '{code}' in DynamoDB.")
+        return {"success": True, "message": "Code registered successfully."}
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            return {"success": False, "message": "This code has already been registered."}
+        print(f"Error saving code to DynamoDB: {e}")
+        return {"success": False, "message": "Failed to save code to database."}
 
 def validate_code(code):
-    """Validates a code and checks its usage."""
-    data = get_codes_from_s3()
-    code_info = data.get("codes", {}).get(code)
+    """Validates if a code is valid, handling monthly resets if necessary."""
+    try:
+        response = dynamodb_table.get_item(Key={'code': code})
+        code_info = response.get('Item')
 
-    if not code_info:
-        return {"valid": False, "message": "Invalid code."}
+        if not code_info:
+            return {"valid": False, "message": "Invalid code."}
 
-    if code_info["type"] == "unlimited":
-        return {"valid": True, "message": "Admin code is valid."}
-
-    if code_info["type"] == "one_time":
-        if code_info["used_count"] >= code_info["max_uses"]:
-            return {"valid": False, "message": "This code has exceeded its usage limit."}
-        return {"valid": True, "message": f"Code valid. {code_info['max_uses'] - code_info['used_count']} uses remaining."}
-
-    if code_info["type"] == "monthly":
-        current_month = datetime.utcnow().strftime('%Y-%m')
-        if code_info.get("current_month") != current_month:
-            # Reset monthly count if it's a new month
-            code_info["used_count"] = 0
-            code_info["current_month"] = current_month
-            save_codes_to_s3(data)
-
-        if code_info["used_count"] >= code_info["max_uses"]:
-            return {"valid": False, "message": "Monthly usage limit reached."}
+        code_type = code_info.get("type")
         
-        remaining = code_info['max_uses'] - code_info['used_count']
-        return {"valid": True, "message": f"Subscription valid. {remaining} uses remaining this month."}
+        if code_type == "unlimited":
+            return {"valid": True, "message": "Unlimited access code is valid."}
 
-    return {"valid": False, "message": "Unknown code type."}
+        # Handle monthly reset logic
+        if code_type == "monthly":
+            now = datetime.now(timezone.utc)
+            period_start_str = code_info.get("usage_period_start")
+            period_start = datetime.fromisoformat(period_start_str)
+            
+            # Check if one month has passed
+            if now >= period_start + relativedelta(months=1):
+                # If reset is needed, the user has all their uses available
+                remaining = int(code_info.get("max_uses", 0))
+                return {"valid": True, "message": f"Code is valid. {remaining} uses remaining (new cycle)."}
+
+        # For one_time codes and non-reset monthly codes
+        used = int(code_info.get("used_count", 0))
+        max_uses = int(code_info.get("max_uses", 0))
+        if used < max_uses:
+            remaining = max_uses - used
+            return {"valid": True, "message": f"Code is valid. {remaining} uses remaining."}
+        else:
+            return {"valid": False, "message": "This code has no uses left for the current period."}
+
+    except ClientError as e:
+        print(f"Error validating code from DynamoDB: {e}")
+        return {"valid": False, "message": "Error validating code."}
 
 def update_code_usage(code):
-    """Increments the usage count for a given code."""
-    data = get_codes_from_s3()
-    code_info = data.get("codes", {}).get(code)
+    """Atomically increments usage, handling monthly resets before updating."""
+    try:
+        response = dynamodb_table.get_item(Key={'code': code})
+        code_info = response.get('Item')
 
-    if not code_info or code_info["type"] == "unlimited":
-        return {"success": True} 
+        if not code_info:
+            return {"success": False, "message": "Code not found."}
 
-    code_info["used_count"] += 1
-    code_info["last_used"] = datetime.utcnow().isoformat()
-    save_codes_to_s3(data)
-    
-    return {"success": True, "message": "Usage updated."}
+        code_type = code_info.get("type")
+        if code_type == "unlimited":
+            return {"success": True, "message": "Code usage updated for unlimited code."}
 
+        now_iso = datetime.now(timezone.utc).isoformat()
+        
+        # Determine if a monthly reset is needed
+        reset_needed = False
+        if code_type == "monthly":
+            now = datetime.now(timezone.utc)
+            period_start = datetime.fromisoformat(code_info.get("usage_period_start"))
+            if now >= period_start + relativedelta(months=1):
+                reset_needed = True
+
+        if reset_needed:
+            # Atomically reset the count to 1 and update the period start time
+            dynamodb_table.update_item(
+                Key={'code': code},
+                UpdateExpression="SET used_count = :one, last_used = :ts, usage_period_start = :ts",
+                ExpressionAttributeValues={
+                    ':one': 1,
+                    ':ts': now_iso,
+                }
+            )
+            print(f"Successfully reset and updated usage for monthly code '{code}'.")
+            return {"success": True, "message": "Code usage updated."}
+        else:
+            # Atomically increment the count if it's less than the max
+            dynamodb_table.update_item(
+                Key={'code': code},
+                UpdateExpression="SET used_count = used_count + :inc, last_used = :ts",
+                ConditionExpression="used_count < max_uses",
+                ExpressionAttributeValues={
+                    ':inc': 1,
+                    ':ts': now_iso,
+                }
+            )
+            print(f"Successfully incremented usage for code '{code}'.")
+            return {"success": True, "message": "Code usage updated."}
+
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+             return {"success": False, "message": "Code has no uses left or condition failed."}
+        print(f"Error updating code usage in DynamoDB: {e}")
+        return {"success": False, "message": "Failed to update code usage."}

@@ -1,0 +1,40 @@
+{
+  "codes": {
+    "FREE3-243": {
+      "type": "one_time",
+      "max_uses": 3,
+      "used_count": 0,
+      "created_at": "2025-09-22",
+      "last_used": null
+    },
+    "MONTH30-523": {
+      "type": "monthly",
+      "max_uses": 30,
+      "used_count": 2,
+      "created_at": "2025-09-22",
+      "current_month": "2025-09",
+      "last_used": "2025-09-23T04:35:17.824183"
+    },
+    "FREE3-MFX19ALO": {
+      "type": "unlimited",
+      "email": "evans.malcolmc@gmail.com",
+      "created_at": "2025-09-23 20:54:03"
+    },
+    "FREE3-MFYQALBA": {
+      "type": "one_time",
+      "max_uses": 3,
+      "used_count": 0,
+      "email": "mevans69@wgu.edu",
+      "created_at": "2025-09-25T01:22:40.116098",
+      "last_used": null
+    },
+    "FREE3-MFYQD8MF": {
+      "type": "one_time",
+      "max_uses": 3,
+      "used_count": 0,
+      "email": "mikellevans@gmail.com",
+      "created_at": "2025-09-25T01:24:43.282906",
+      "last_used": null
+    }
+  }
+}

@@ -260,9 +260,8 @@
         let previewTTSAudio = new Audio();
         let previewBgMusicAudio = new Audio();
         
-        // --- CORRECTED AUDIO PREVIEW LOGIC ---
-        previewTTSAudio.loop = true; // Set TTS audio to loop
-        previewBgMusicAudio.loop = false; // Ensure background music does not loop
+        previewTTSAudio.loop = true;
+        previewBgMusicAudio.loop = false;
 
         const AVAILABLE_VOICES = [
             { name: 'en-US-Studio-Q', gender: 'Female', type: 'Studio' }, { name: 'en-US-Studio-M', gender: 'Male', type: 'Studio' },
@@ -306,14 +305,22 @@
         const stopPreview = () => {
             previewTTSAudio.pause();
             previewBgMusicAudio.pause();
-            previewTTSAudio.currentTime = 0;
-            previewBgMusicAudio.currentTime = 0;
             DOMElements.previewAudioBtn.style.display = 'inline-block';
             DOMElements.pausePreviewBtn.style.display = 'none';
         };
 
         DOMElements.previewAudioBtn.addEventListener('click', async () => {
             const btn = DOMElements.previewAudioBtn;
+            
+            // If resuming paused audio, just play and return
+            if (previewTTSAudio.src && previewTTSAudio.paused) {
+                previewTTSAudio.play();
+                if (previewBgMusicAudio.src) previewBgMusicAudio.play();
+                DOMElements.previewAudioBtn.style.display = 'none';
+                DOMElements.pausePreviewBtn.style.display = 'inline-block';
+                return;
+            }
+
             btn.disabled = true;
             btn.textContent = 'Loading...';
 
@@ -405,9 +412,15 @@
                         DOMElements.generateBtn.textContent = 'Generate Video';
                     } else if (statusResult.status === 'in_progress') {
                         logStatus(message);
-                        const currentWidth = parseFloat(DOMElements.progressBar.style.width);
-                        if (currentWidth < 95) updateProgress(currentWidth + 2, message);
-                    } else { logStatus(message); }
+                        // Use regex to find a percentage like "(XX% complete)" in the message
+                        const progressMatch = message.match(/\((\d{1,3})%\s*complete\)/);
+                        if (progressMatch && progressMatch[1]) {
+                            const percentage = parseInt(progressMatch[1], 10);
+                            updateProgress(percentage, message);
+                        }
+                    } else { 
+                        logStatus(message); 
+                    }
                 } catch (pollError) {
                     clearInterval(pollInterval);
                     localStorage.removeItem('activeJobId');
@@ -453,7 +466,11 @@
         });
         
         DOMElements.generateBtn.addEventListener('click', async () => {
-            stopPreview();
+            previewTTSAudio.pause();
+            previewBgMusicAudio.pause();
+            previewTTSAudio.currentTime = 0;
+            previewBgMusicAudio.currentTime = 0;
+
             const url = DOMElements.urlInput.value.trim();
             const previewCode = DOMElements.previewCodeInput.value.trim();
             if (!url || !previewCode) {
@@ -467,7 +484,7 @@
             DOMElements.progressContainer.style.display = 'block';
             DOMElements.progressBar.style.backgroundColor = '#0079d3';
             DOMElements.statusLog.innerHTML = '';
-            updateProgress(10, 'Submitting...');
+            updateProgress(1, 'Submitting...');
 
             const formData = new FormData();
             formData.append('url', url);
@@ -525,4 +542,3 @@
     </script>
 </body>
 </html>
-

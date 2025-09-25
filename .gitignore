@@ -5,3 +5,5 @@ venv/
 
 # Secrets
 ecosystem.config.js
+codes.json
+migrate_to_dynamo.py

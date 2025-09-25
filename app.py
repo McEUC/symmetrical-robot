@@ -23,6 +23,10 @@ AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
 AWS_S3_BUCKET_NAME = os.environ.get("AWS_S3_BUCKET_NAME")
 PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY")
 
+# --- INITIALIZE CODE MANAGER ---
+# This line is crucial for passing credentials to the code_manager module
+code_manager.init_s3_credentials(AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_BUCKET_NAME)
+
 def upload_to_s3(file_path, object_name):
     """Uploads a file to an S3 bucket."""
     s3_client = boto3.client('s3', aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
@@ -35,36 +39,50 @@ def upload_to_s3(file_path, object_name):
 # --- FLASK ROUTES ---
 @app.route('/')
 def index():
-    """Serves the landing page."""
+    """Serves the main landing page."""
     return render_template('landing.html')
 
 @app.route('/generator')
 def generator():
-    """Serves the main generator application page."""
+    """Serves the video generator application page."""
     return render_template('generator.html')
+
+@app.route('/register-code', methods=['POST'])
+def handle_code_registration():
+    """Handles new user code registration from the landing page."""
+    data = request.get_json()
+    email = data.get('email')
+    code = data.get('code')
+    if not email or not code:
+        return jsonify({"success": False, "message": "Email and code are required."}), 400
+    
+    result = code_manager.register_new_code(email, code)
+    if result["success"]:
+        return jsonify(result), 200
+    else:
+        # 409 Conflict is a good status code for duplicate entries
+        return jsonify(result), 409
 
 @app.route('/validate-code', methods=['POST'])
 def validate_preview_code():
-    """Endpoint for the frontend to validate a preview code."""
+    """Validates if a user's code is valid before enabling generation."""
     data = request.get_json()
     code = data.get('code')
-    if not code:
-        return jsonify({"valid": False, "message": "Please enter a code."})
+    if not code: return jsonify({"valid": False, "message": "Please enter a code."})
     return jsonify(code_manager.validate_code(code))
 
 @app.route('/update-code-usage', methods=['POST'])
 def update_code_usage_route():
-    """Endpoint for the worker to call back to after a successful video generation."""
+    """Endpoint for the worker to call to increment a code's usage count."""
     data = request.get_json()
     code = data.get('code')
     result = code_manager.update_code_usage(code)
-    if result["success"]:
-        return jsonify(result), 200
+    if result["success"]: return jsonify(result), 200
     return jsonify(result), 400
 
 @app.route('/preview-tts', methods=['POST'])
 def preview_tts():
-    """Generates a TTS audio sample for the frontend preview."""
+    """Generates a TTS audio sample for the live audio preview feature."""
     try:
         data = request.get_json()
         voice_name = data.get('voice')
@@ -74,7 +92,7 @@ def preview_tts():
         if not GOOGLE_API_KEY:
             return jsonify({"error": "Server TTS is not configured."}), 500
 
-        preview_text = "This is a preview of the selected narrator's voice. You can adjust the background music volume to find the perfect balance for your video production. I hope you really enjoy this application, and if you have any advice on what to make better, please send an email to a trillion pieces at gmail dot com! Thank you!"
+        preview_text = "This is a preview of the selected narrator's voice. You can adjust the background music volume to find the perfect balance for your video production."
 
         tts_service = build('texttospeech', 'v1', developerKey=GOOGLE_API_KEY)
         request_body = {
@@ -93,7 +111,7 @@ def preview_tts():
 
 @app.route('/generate-video', methods=['POST'])
 def handle_video_generation():
-    """Handles the main video generation job submission."""
+    """The main endpoint to handle a video generation job submission."""
     try:
         form_data = request.form
         preview_code = form_data.get('previewCode')
@@ -123,7 +141,6 @@ def handle_video_generation():
             "background_music_url": None
         }
         
-        # Handle background music upload
         if 'backgroundMusic' in request.files and request.files['backgroundMusic'].filename != '':
             music_file = request.files['backgroundMusic']
             music_filename = "bg_music" + os.path.splitext(music_file.filename)[1]
@@ -138,7 +155,7 @@ def handle_video_generation():
             json.dump(job_data, f)
         upload_to_s3(job_file_path, f"jobs/{job_id}/job.json")
 
-        headers = {"Accept": "application/vnd.github.v3+json", "Authorization": f"token {GITHUB_TOKEN}"}
+        headers = {"Accept": "application/vnd.github.v3+json", "Authorization": f"token {GITHUB_TOKEN}", "X-GitHub-Api-Version": "2022-11-28"}
         data = {"event_type": "video-job", "client_payload": {"job_id": job_id}}
         dispatch_url = f"https://api.github.com/repos/{GITHUB_USERNAME}/{GITHUB_REPO_NAME}/dispatches"
         requests.post(dispatch_url, json=data, headers=headers, timeout=10).raise_for_status()
@@ -152,21 +169,19 @@ def handle_video_generation():
 
 @app.route('/status/<job_id>', methods=['GET'])
 def get_status(job_id):
-    """Endpoint for the frontend to poll for job status updates."""
+    """Polls S3 for the job status or final video URL."""
     s3_client = boto3.client('s3', aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
-    try:
+    try: 
         video_key = f"jobs/{job_id}/output/final_video.mp4"
         s3_client.head_object(Bucket=AWS_S3_BUCKET_NAME, Key=video_key)
-        video_url = f"https://{AWS_S3_BUCKET_NAME}.s3.amazonaws.com/{video_key}"
-        return jsonify({"status": "done", "downloadUrl": video_url})
-    except s3_client.exceptions.ClientError:
-        pass # Video not found, check for status file
-    try:
+        return jsonify({"status": "done", "downloadUrl": f"https://{AWS_S3_BUCKET_NAME}.s3.amazonaws.com/{video_key}"})
+    except s3_client.exceptions.ClientError: pass
+    try: 
         status_key = f"jobs/{job_id}/status.json"
         status_obj = s3_client.get_object(Bucket=AWS_S3_BUCKET_NAME, Key=status_key)
         return jsonify(json.loads(status_obj['Body'].read().decode('utf-8')))
     except s3_client.exceptions.ClientError:
-        return jsonify({"status": "pending", "message": "Job is queued and waiting for worker..."})
+        return jsonify({"status": "pending", "message": "Job is queued..."})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
